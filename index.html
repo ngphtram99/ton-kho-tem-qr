@@ -863,6 +863,16 @@
     }
   }
 
+  // Trinh duyet hien dai (Chrome/Edge tren Android, 1 so ban Safari moi) co san
+  // bo nhan dien QR native cua he thong - manh hon nhieu so vi jsQR (thu vien
+  // JS thuan) trong dieu kien anh choi/mo/xa, vi no dung phan cung/ML cua may.
+  // Neu may khong ho tro thi tu dong dung lai jsQR nhu binh thuong.
+  var nativeDetector = null;
+  if ("BarcodeDetector" in window){
+    try{ nativeDetector = new BarcodeDetector({ formats: ["qr_code"] }); }
+    catch(e){ nativeDetector = null; }
+  }
+
   // Tao 1 "may quet" gan vao 1 the <video>: tu quan ly camera stream + vong
   // lap doc frame. onFrame(decodedTextOrNull) duoc goi moi frame - null nghia
   // la frame nay khong thay QR nao (dung de ben goi biet luc nao "mat dau" QR).
@@ -871,22 +881,41 @@
     var ctx2 = canvasEl.getContext("2d");
     var stream = null;
     var loopId = null;
+    var busy = false;
+
+    function handleJsQrFallback(){
+      canvasEl.width = videoEl.videoWidth;
+      canvasEl.height = videoEl.videoHeight;
+      ctx2.drawImage(videoEl, 0, 0, canvasEl.width, canvasEl.height);
+      var imgData = ctx2.getImageData(0, 0, canvasEl.width, canvasEl.height);
+      var result = window.jsQR ? jsQR(imgData.data, imgData.width, imgData.height) : null;
+      onFrame(result && result.data ? extractCodeFromScan(result.data) : null);
+    }
 
     function loop(){
-      if (videoEl.readyState === videoEl.HAVE_ENOUGH_DATA){
-        canvasEl.width = videoEl.videoWidth;
-        canvasEl.height = videoEl.videoHeight;
-        ctx2.drawImage(videoEl, 0, 0, canvasEl.width, canvasEl.height);
-        var imgData = ctx2.getImageData(0, 0, canvasEl.width, canvasEl.height);
-        var result = window.jsQR ? jsQR(imgData.data, imgData.width, imgData.height) : null;
-        onFrame(result && result.data ? extractCodeFromScan(result.data) : null);
+      if (!busy && videoEl.readyState === videoEl.HAVE_ENOUGH_DATA){
+        if (nativeDetector){
+          busy = true;
+          nativeDetector.detect(videoEl).then(function(codes){
+            busy = false;
+            onFrame(codes && codes.length ? extractCodeFromScan(codes[0].rawValue) : null);
+          }).catch(function(){
+            busy = false;
+            handleJsQrFallback(); // API loi tren frame nay - thu lai bang jsQR cho chac
+          });
+        } else {
+          handleJsQrFallback();
+        }
       }
       loopId = requestAnimationFrame(loop);
     }
 
     return {
       start: async function(){
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        // Xin do phan giai cao hon mac dinh de QR nho/o xa van du net de nhan dien.
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } }
+        });
         videoEl.srcObject = stream;
         await videoEl.play();
         loop();
