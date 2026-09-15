@@ -1,0 +1,1138 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Tồn Kho Tem QR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#F5F6F1;
+    --surface:#FFFFFF;
+    --ink:#1C2620;
+    --ink-soft:#5B6A5E;
+    --line:#DADFD1;
+    --available:#2F6F4E;
+    --available-bg:#E4F1E8;
+    --out:#B3402A;
+    --out-bg:#FBE7E1;
+    --radius:14px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,sans-serif;
+    padding-bottom: calc(32px + env(safe-area-inset-bottom));
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mono{ font-family:"IBM Plex Mono", monospace; }
+
+  header.top{
+    padding: calc(20px + env(safe-area-inset-top)) 20px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+  header.top h1{
+    margin:0;
+    font-size: 21px;
+    font-weight:700;
+    letter-spacing: -0.01em;
+  }
+  header.top p{
+    margin: 4px 0 0;
+    font-size: 13.5px;
+    color: var(--ink-soft);
+  }
+  .stats{
+    display:flex;
+    gap:14px;
+    margin-top:12px;
+    font-size:12.5px;
+    color: var(--ink-soft);
+  }
+  .stats b{ color:var(--ink); font-weight:600; }
+
+  main{ padding: 18px 16px 0; max-width: 640px; margin: 0 auto; }
+
+  .search-card{
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px;
+  }
+  .search-row{
+    display:flex;
+    gap:8px;
+  }
+  #searchInput{
+    flex:1;
+    min-width:0;
+    font-family:"IBM Plex Mono", monospace;
+    font-size: 17px;
+    font-weight:600;
+    letter-spacing: 0.01em;
+    padding: 13px 14px;
+    border-radius: 10px;
+    border: 1.5px solid var(--line);
+    background: var(--bg);
+    color: var(--ink);
+    text-transform: none;
+  }
+  #searchInput:focus{
+    outline:none;
+    border-color: var(--ink);
+  }
+  #scanBtn{
+    flex-shrink:0;
+    width: 50px;
+    border-radius: 10px;
+    border: 1.5px solid var(--ink);
+    background: var(--ink);
+    color: #fff;
+    font-size: 20px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    cursor:pointer;
+  }
+  #scanBtn.active{
+    background: var(--out);
+    border-color: var(--out);
+  }
+
+  .camera-box{
+    display:none;
+    margin-top: 12px;
+    border-radius: 10px;
+    overflow:hidden;
+    position:relative;
+    background:#000;
+  }
+  .camera-box.on{ display:block; }
+  .camera-box video{
+    width:100%;
+    display:block;
+    max-height: 280px;
+    object-fit: cover;
+  }
+  .scan-frame{
+    position:absolute; inset:0;
+    border: 2px solid rgba(255,255,255,0.55);
+    margin: 15%;
+    border-radius: 12px;
+    pointer-events:none;
+  }
+  #cameraMsg{
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    margin-top: 8px;
+  }
+
+  /* Ket qua tra cuu - banner lon de nhin nhanh */
+  #resultBanner{
+    margin-top: 14px;
+    border-radius: var(--radius);
+    padding: 16px;
+    display:none;
+  }
+  #resultBanner.show{ display:block; }
+  #resultBanner.found{
+    background: var(--available-bg);
+    border: 1.5px solid var(--available);
+  }
+  #resultBanner.notfound{
+    background: var(--out-bg);
+    border: 1.5px solid var(--out);
+  }
+  .result-top{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    gap: 10px;
+  }
+  .result-code{
+    font-family:"IBM Plex Mono", monospace;
+    font-size: 18px;
+    font-weight:600;
+    word-break: break-all;
+  }
+  .result-status{
+    font-size: 14px;
+    font-weight:700;
+    white-space:nowrap;
+  }
+  #resultBanner.found .result-status{ color: var(--available); }
+  #resultBanner.notfound .result-status{ color: var(--out); }
+  .result-sub{
+    margin-top:4px;
+    font-size: 13px;
+    color: var(--ink-soft);
+  }
+  .result-actions{
+    margin-top: 12px;
+    display:flex;
+    gap:8px;
+  }
+  .btn{
+    border-radius: 9px;
+    border: 1.5px solid var(--ink);
+    background: var(--ink);
+    color:#fff;
+    font-size: 14px;
+    font-weight:600;
+    padding: 10px 14px;
+    cursor:pointer;
+    font-family: inherit;
+  }
+  .btn.ghost{
+    background: transparent;
+    color: var(--ink);
+  }
+  .btn.small{ padding: 7px 11px; font-size:13px; }
+
+  .suggest-list{ margin-top:10px; font-size: 13px; color: var(--ink-soft); }
+  .suggest-list button{
+    display:inline-block;
+    margin: 4px 6px 0 0;
+    font-family:"IBM Plex Mono", monospace;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 5px 9px;
+    font-size: 12.5px;
+    cursor:pointer;
+    color: var(--ink);
+  }
+
+  /* Danh sach ton kho - kieu "tem" perforated */
+  .section-title{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    margin: 26px 0 10px;
+  }
+  .section-title h2{
+    font-size:15px;
+    margin:0;
+    font-weight:700;
+  }
+  .section-title .add-btn{
+    font-size: 13px;
+    font-weight:600;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1.5px solid var(--ink);
+    border-radius: 8px;
+    padding: 7px 12px;
+    cursor:pointer;
+  }
+
+  #emptyState{
+    background: var(--surface);
+    border: 1.5px dashed var(--line);
+    border-radius: var(--radius);
+    padding: 26px 18px;
+    text-align:center;
+    color: var(--ink-soft);
+    font-size: 13.5px;
+  }
+  #emptyState button{ margin-top:12px; }
+
+  #list{ display:flex; flex-direction:column; gap:10px; }
+
+  .stamp{
+    position:relative;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px 12px 20px;
+    display:flex;
+    align-items:center;
+    gap:10px;
+  }
+  .stamp::before{
+    content:"";
+    position:absolute;
+    left:0; top:0; bottom:0;
+    width:10px;
+    background-image: radial-gradient(circle, var(--bg) 2.6px, transparent 3px);
+    background-size: 10px 11px;
+    background-position: left center;
+    background-repeat: repeat-y;
+  }
+  .stamp.out{ opacity: 0.72; }
+  .stamp-main{ flex:1; min-width:0; }
+  .stamp-code{
+    font-family:"IBM Plex Mono", monospace;
+    font-size: 14.5px;
+    font-weight:600;
+    word-break: break-all;
+  }
+  .stamp-meta{
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin-top:2px;
+  }
+  .pill{
+    display:inline-block;
+    font-size: 11px;
+    font-weight:700;
+    padding: 2px 7px;
+    border-radius: 999px;
+  }
+  .pill.available{ background: var(--available-bg); color: var(--available); }
+  .pill.out{ background: var(--out-bg); color: var(--out); }
+
+  .qty-controls{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    flex-shrink:0;
+  }
+  .qty-btn{
+    width:28px; height:28px;
+    border-radius:8px;
+    border:1.5px solid var(--line);
+    background: var(--bg);
+    font-size:16px;
+    font-weight:700;
+    cursor:pointer;
+    color: var(--ink);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .qty-num{
+    min-width: 22px;
+    text-align:center;
+    font-family:"IBM Plex Mono", monospace;
+    font-weight:600;
+    font-size: 14px;
+  }
+  .del-btn{
+    flex-shrink:0;
+    width:28px; height:28px;
+    border-radius:8px;
+    border:1.5px solid var(--line);
+    background: var(--surface);
+    color: var(--out);
+    font-size:15px;
+    cursor:pointer;
+  }
+
+  /* modal them / nhap danh sach */
+  #overlay{
+    display:none;
+    position:fixed; inset:0;
+    background: rgba(20,26,22,0.45);
+    z-index: 40;
+    align-items:flex-end;
+    justify-content:center;
+  }
+  #overlay.show{ display:flex; }
+  #sheet{
+    width:100%;
+    max-width: 640px;
+    background: var(--surface);
+    border-radius: 18px 18px 0 0;
+    padding: 18px 18px calc(22px + env(safe-area-inset-bottom));
+    max-height: 82vh;
+    overflow-y:auto;
+  }
+  .sheet-handle{
+    width:36px; height:4px;
+    background: var(--line);
+    border-radius:99px;
+    margin: 0 auto 14px;
+  }
+  #sheet h3{ margin:0 0 4px; font-size:16px; }
+  #sheet p.hint{ margin:0 0 12px; font-size:12.5px; color: var(--ink-soft); }
+  .tabs{ display:flex; gap:6px; margin-bottom:14px; }
+  .tab-btn{
+    flex:1;
+    padding:9px;
+    border-radius:8px;
+    border:1.5px solid var(--line);
+    background: var(--bg);
+    font-size:13px;
+    font-weight:600;
+    color: var(--ink-soft);
+    cursor:pointer;
+  }
+  .tab-btn.active{ border-color: var(--ink); color: var(--ink); background:#fff; }
+  textarea, input.field{
+    width:100%;
+    border-radius: 10px;
+    border: 1.5px solid var(--line);
+    background: var(--bg);
+    padding: 11px 12px;
+    font-family:"IBM Plex Mono", monospace;
+    font-size: 14px;
+    resize: vertical;
+  }
+  textarea:focus, input.field:focus{ outline:none; border-color: var(--ink); }
+  .field-row{ margin-bottom:12px; }
+  .field-row label{ display:block; font-size:12.5px; font-weight:600; margin-bottom:6px; color: var(--ink-soft); }
+  .sheet-actions{ display:flex; gap:8px; margin-top: 6px; }
+  .sheet-actions .btn{ flex:1; text-align:center; }
+
+  #toast{
+    position:fixed;
+    left:50%; bottom: calc(18px + env(safe-area-inset-bottom));
+    transform: translateX(-50%) translateY(20px);
+    background: var(--ink);
+    color:#fff;
+    padding: 10px 16px;
+    border-radius: 10px;
+    font-size: 13px;
+    opacity:0;
+    transition: all 0.25s ease;
+    z-index: 60;
+    max-width: 90vw;
+    text-align:center;
+  }
+  #toast.show{ opacity:1; transform: translateX(-50%) translateY(0); }
+
+  .scan-tally-header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    font-size: 13px;
+    color: var(--ink-soft);
+    margin-top: 10px;
+  }
+  .scan-tally-header b{ color: var(--ink); }
+  #tallyList{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+    margin-top:8px;
+    max-height: 220px;
+    overflow-y:auto;
+  }
+  .tally-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 7px 10px;
+  }
+  .tally-row .tally-code{
+    font-family:"IBM Plex Mono", monospace;
+    font-size: 13px;
+    word-break: break-all;
+  }
+  .tally-row .tally-qty{
+    font-family:"IBM Plex Mono", monospace;
+    font-weight:700;
+    font-size: 13px;
+    flex-shrink:0;
+    margin-left:10px;
+  }
+  .tally-empty{
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    text-align:center;
+    padding: 10px 0;
+  }
+
+  .fab{
+    position:fixed;
+    right:18px;
+    bottom: calc(20px + env(safe-area-inset-bottom));
+    width:54px; height:54px;
+    border-radius: 50%;
+    background: var(--ink);
+    color:#fff;
+    border:none;
+    font-size:26px;
+    box-shadow: 0 6px 16px rgba(28,38,32,0.28);
+    cursor:pointer;
+    z-index: 30;
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <h1>Tồn Kho Tem QR</h1>
+  <p>Gõ hoặc quét mã để biết ngay bạn có sẵn tem trong tay hay không.</p>
+  <div class="stats">
+    <span>Tổng mã: <b id="statTotal">0</b></span>
+    <span>Còn tem: <b id="statAvailable">0</b></span>
+    <span>Đã hết: <b id="statOut">0</b></span>
+  </div>
+</header>
+
+<main>
+  <div class="search-card">
+    <div class="search-row">
+      <input id="searchInput" class="mono" type="text" placeholder="Nhập mã sản phẩm..." autocomplete="off" autocapitalize="off" spellcheck="false" />
+      <button id="scanBtn" title="Quét QR bằng camera">▣</button>
+    </div>
+
+    <div id="cameraWrap" class="camera-box">
+      <video id="video" playsinline muted></video>
+      <div class="scan-frame"></div>
+    </div>
+    <div id="cameraMsg"></div>
+    <button id="openScanCountLink" style="margin-top:10px; background:none; border:none; padding:0; font-size:12.5px; color:var(--ink-soft); text-decoration:underline; cursor:pointer; font-family:inherit;">Chưa rõ trên bàn có bao nhiêu mã? Quét hàng loạt để đếm →</button>
+
+    <div id="resultBanner">
+      <div class="result-top">
+        <div class="result-code mono" id="resultCode">—</div>
+        <div class="result-status" id="resultStatus">—</div>
+      </div>
+      <div class="result-sub" id="resultSub"></div>
+      <div class="result-actions" id="resultActions"></div>
+      <div class="suggest-list" id="suggestList"></div>
+    </div>
+  </div>
+
+  <div class="section-title">
+    <h2>Toàn bộ tem đang có</h2>
+    <button class="add-btn" id="openSheetBtn">+ Thêm mã</button>
+  </div>
+
+  <div id="emptyState">
+    Chưa có mã nào trong kho.<br/>Dán danh sách các mã bạn đã in để bắt đầu theo dõi.
+    <div><button class="btn" id="emptyImportBtn">Nhập danh sách mã đã in</button></div>
+  </div>
+
+  <div id="list"></div>
+</main>
+
+<button class="fab" id="fabBtn" title="Thêm mã">+</button>
+
+<div id="overlay">
+  <div id="sheet">
+    <div class="sheet-handle"></div>
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="single">Thêm 1 mã</button>
+      <button class="tab-btn" data-tab="bulk">Dán nhiều mã</button>
+      <button class="tab-btn" data-tab="scan">Quét &amp; đếm</button>
+    </div>
+
+    <div id="tabSingle">
+      <div class="field-row">
+        <label>Mã sản phẩm</label>
+        <input class="field mono" id="singleCode" placeholder="VD: A24002TS" autocapitalize="off" spellcheck="false" />
+      </div>
+      <div class="field-row">
+        <label>Số lượng tem đang có</label>
+        <input class="field mono" id="singleQty" type="number" min="1" value="1" />
+      </div>
+    </div>
+
+    <div id="tabBulk" style="display:none;">
+      <div class="field-row">
+        <label>Dán danh sách mã, mỗi dòng một mã (có thể thêm ",số lượng")</label>
+        <textarea id="bulkText" rows="7" placeholder="A24002TS&#10;C631RM,3&#10;F4809R"></textarea>
+        <p class="hint">Không ghi số lượng thì mặc định là 1 tem/mã. Nếu mã đã có sẵn, số lượng sẽ được cộng dồn.</p>
+      </div>
+    </div>
+
+    <div id="tabScanCount" style="display:none;">
+      <p class="hint" style="margin-top:0;">Đưa lần lượt từng tem trên bàn vào khung hình. Quét trúng mã nào, mã đó tự cộng thêm 1 — quét lại đúng mã cũ (tem trùng) sẽ cộng tiếp, không tính là lỗi.</p>
+      <div id="scanCountCameraWrap" class="camera-box">
+        <video id="videoCount" playsinline muted></video>
+        <div class="scan-frame"></div>
+      </div>
+      <div id="countScanMsg" style="font-size:12.5px; color:var(--ink-soft); margin-top:8px; min-height:16px;"></div>
+      <button class="btn" id="toggleScanCountBtn" style="width:100%; margin-top:2px;">Bắt đầu quét</button>
+      <div class="scan-tally-header">
+        <span>Đã quét: <b id="tallyTotal">0</b> lượt · <b id="tallyUnique">0</b> mã khác nhau</span>
+        <button class="btn ghost small" id="resetTallyBtn">Xoá hết</button>
+      </div>
+      <div id="tallyList"><div class="tally-empty">Chưa quét mã nào trong phiên này.</div></div>
+    </div>
+
+    <div class="sheet-actions">
+      <button class="btn ghost" id="cancelSheetBtn">Huỷ</button>
+      <button class="btn" id="saveSheetBtn">Lưu vào kho</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  var STORAGE_KEY = "temInventory";
+  var inventory = []; // { code, key, qty, updatedAt }
+
+  // ---------- Lop luu tru tuong thich 2 moi truong ----------
+  // Khi mo trong Claude: dung window.storage (co san). Khi tai file ve mo
+  // doc lap hoac host o noi khac: window.storage khong ton tai -> tu dong
+  // chuyen sang IndexedDB (luu ngay trong trinh duyet cua may/dien thoai).
+  var hasClaudeStorage = typeof window.storage !== "undefined" && window.storage && typeof window.storage.get === "function";
+
+  var IDB_NAME = "temInventoryDB";
+  var IDB_STORE = "kv";
+  var idbPromise = null;
+  function openIdb(){
+    if (idbPromise) return idbPromise;
+    idbPromise = new Promise(function(resolve, reject){
+      if (!("indexedDB" in window)) { reject(new Error("Trinh duyet khong ho tro luu tru.")); return; }
+      var req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = function(){ req.result.createObjectStore(IDB_STORE); };
+      req.onsuccess = function(){ resolve(req.result); };
+      req.onerror = function(){ reject(req.error); };
+    });
+    return idbPromise;
+  }
+  function idbGet(key){
+    return openIdb().then(function(db){
+      return new Promise(function(resolve, reject){
+        var tx = db.transaction(IDB_STORE, "readonly");
+        var req = tx.objectStore(IDB_STORE).get(key);
+        req.onsuccess = function(){ resolve(req.result || null); };
+        req.onerror = function(){ reject(req.error); };
+      });
+    });
+  }
+  function idbSet(key, value){
+    return openIdb().then(function(db){
+      return new Promise(function(resolve, reject){
+        var tx = db.transaction(IDB_STORE, "readwrite");
+        tx.objectStore(IDB_STORE).put(value, key);
+        tx.oncomplete = function(){ resolve(true); };
+        tx.onerror = function(){ reject(tx.error); };
+      });
+    });
+  }
+
+  async function storageGet(key){
+    if (hasClaudeStorage){
+      var res = await window.storage.get(key, false);
+      return res ? res.value : null;
+    }
+    return idbGet(key);
+  }
+  async function storageSet(key, value){
+    if (hasClaudeStorage) await window.storage.set(key, value, false);
+    else await idbSet(key, value);
+  }
+
+  function normalizeKey(raw){
+    return String(raw || "").trim().replace(/\s+/g, " ").toLowerCase();
+  }
+
+  function showToast(msg){
+    var t = document.getElementById("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    clearTimeout(showToast._timer);
+    showToast._timer = setTimeout(function(){ t.classList.remove("show"); }, 2200);
+  }
+
+  // ---------- Luu tru (persistent, rieng cho tung nguoi dung) ----------
+  async function loadInventory(){
+    try{
+      var raw = await storageGet(STORAGE_KEY);
+      if (raw) inventory = JSON.parse(raw);
+    }catch(e){
+      inventory = []; // chua co du lieu tu truoc - binh thuong voi lan dau mo
+    }
+    renderAll();
+  }
+
+  var saveTimer = null;
+  function saveInventory(){
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async function(){
+      try{
+        await storageSet(STORAGE_KEY, JSON.stringify(inventory));
+      }catch(e){
+        showToast("Không lưu được dữ liệu, thử lại sau.");
+      }
+    }, 250);
+  }
+
+  // ---------- Cac thao tac tren kho ----------
+  function findByKey(key){
+    for (var i=0;i<inventory.length;i++){ if (inventory[i].key === key) return inventory[i]; }
+    return null;
+  }
+
+  function upsertCode(rawCode, qtyToAdd){
+    var key = normalizeKey(rawCode);
+    if (!key) return null;
+    var item = findByKey(key);
+    if (item){
+      item.qty = Math.max(0, item.qty + qtyToAdd);
+      item.updatedAt = Date.now();
+    } else {
+      item = { code: String(rawCode).trim(), key: key, qty: Math.max(0, qtyToAdd), updatedAt: Date.now() };
+      inventory.push(item);
+    }
+    return item;
+  }
+
+  function setQty(key, newQty){
+    var item = findByKey(key);
+    if (!item) return;
+    item.qty = Math.max(0, newQty);
+    item.updatedAt = Date.now();
+    saveInventory();
+    renderAll();
+  }
+
+  function deleteItem(key){
+    inventory = inventory.filter(function(x){ return x.key !== key; });
+    saveInventory();
+    renderAll();
+  }
+
+  // ---------- Render ----------
+  function renderStats(){
+    var total = inventory.length;
+    var avail = inventory.filter(function(x){ return x.qty > 0; }).length;
+    document.getElementById("statTotal").textContent = total;
+    document.getElementById("statAvailable").textContent = avail;
+    document.getElementById("statOut").textContent = total - avail;
+  }
+
+  function renderList(filterText){
+    var listEl = document.getElementById("list");
+    var emptyEl = document.getElementById("emptyState");
+    var items = inventory.slice().sort(function(a,b){ return a.key < b.key ? -1 : 1; });
+
+    if (filterText){
+      var f = normalizeKey(filterText);
+      items = items.filter(function(x){ return x.key.indexOf(f) !== -1; });
+    }
+
+    if (inventory.length === 0){
+      emptyEl.style.display = "block";
+      listEl.innerHTML = "";
+      return;
+    }
+    emptyEl.style.display = "none";
+
+    listEl.innerHTML = items.map(function(item){
+      var statusPill = item.qty > 0
+        ? '<span class="pill available">Còn ' + item.qty + '</span>'
+        : '<span class="pill out">Đã hết</span>';
+      return (
+        '<div class="stamp ' + (item.qty>0 ? '' : 'out') + '" data-key="' + item.key + '">' +
+          '<div class="stamp-main">' +
+            '<div class="stamp-code">' + escapeHtml(item.code) + '</div>' +
+            '<div class="stamp-meta">' + statusPill + '</div>' +
+          '</div>' +
+          '<div class="qty-controls">' +
+            '<button class="qty-btn" data-act="dec">–</button>' +
+            '<span class="qty-num">' + item.qty + '</span>' +
+            '<button class="qty-btn" data-act="inc">+</button>' +
+          '</div>' +
+          '<button class="del-btn" data-act="del" title="Xoá mã">✕</button>' +
+        '</div>'
+      );
+    }).join("");
+  }
+
+  function renderAll(){
+    renderStats();
+    renderList(document.getElementById("searchInput").value);
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  }
+
+  document.getElementById("list").addEventListener("click", function(e){
+    var btn = e.target.closest("button");
+    if (!btn) return;
+    var card = e.target.closest(".stamp");
+    var key = card.getAttribute("data-key");
+    var item = findByKey(key);
+    if (!item) return;
+    var act = btn.getAttribute("data-act");
+    if (act === "inc") setQty(key, item.qty + 1);
+    else if (act === "dec") setQty(key, item.qty - 1);
+    else if (act === "del"){
+      if (confirm('Xoá mã "' + item.code + '" khỏi kho?')) deleteItem(key);
+    }
+  });
+
+  // ---------- Tim kiem / tra cuu nhanh ----------
+  var searchInput = document.getElementById("searchInput");
+  var resultBanner = document.getElementById("resultBanner");
+
+  function runLookup(raw){
+    renderList(raw);
+    var key = normalizeKey(raw);
+    if (!key){
+      resultBanner.classList.remove("show");
+      return;
+    }
+    var item = findByKey(key);
+
+    resultBanner.classList.add("show");
+    document.getElementById("resultCode").textContent = raw.trim();
+
+    if (item && item.qty > 0){
+      resultBanner.className = "show found";
+      document.getElementById("resultStatus").textContent = "✓ CÓ SẴN";
+      document.getElementById("resultSub").textContent = "Còn " + item.qty + " tem trong kho của bạn.";
+      document.getElementById("resultActions").innerHTML =
+        '<button class="btn" id="useOneBtn">Đã dán 1 tem (-1)</button>';
+      document.getElementById("suggestList").innerHTML = "";
+      document.getElementById("useOneBtn").onclick = function(){
+        setQty(key, item.qty - 1);
+        runLookup(raw);
+        showToast("Đã trừ 1 tem — còn " + Math.max(0,item.qty-1));
+      };
+    } else if (item && item.qty === 0){
+      resultBanner.className = "show notfound";
+      document.getElementById("resultStatus").textContent = "✕ ĐÃ HẾT";
+      document.getElementById("resultSub").textContent = "Mã này từng có nhưng đã dùng hết tem in sẵn.";
+      document.getElementById("resultActions").innerHTML =
+        '<button class="btn" id="addBackBtn">+ Thêm lại 1 tem</button>';
+      document.getElementById("suggestList").innerHTML = "";
+      document.getElementById("addBackBtn").onclick = function(){
+        setQty(key, item.qty + 1);
+        runLookup(raw);
+        showToast("Đã thêm 1 tem cho mã này.");
+      };
+    } else {
+      resultBanner.className = "show notfound";
+      document.getElementById("resultStatus").textContent = "✕ KHÔNG CÓ";
+      document.getElementById("resultSub").textContent = "Mã này chưa có trong kho tem của bạn.";
+      document.getElementById("resultActions").innerHTML =
+        '<button class="btn" id="quickAddBtn">+ Thêm mã này vào kho</button>';
+      document.getElementById("quickAddBtn").onclick = function(){
+        upsertCode(raw.trim(), 1);
+        saveInventory();
+        renderAll();
+        runLookup(raw);
+        showToast("Đã thêm mã mới vào kho.");
+      };
+
+      // Goi y cac ma gan giong (phong khi go/doc nham 1-2 ky tu)
+      var suggestions = inventory.filter(function(x){
+        return x.key.indexOf(key) !== -1 || key.indexOf(x.key) !== -1;
+      }).slice(0, 6);
+      if (suggestions.length){
+        document.getElementById("suggestList").innerHTML =
+          "Có thể bạn muốn tìm: " +
+          suggestions.map(function(s){
+            return '<button data-code="' + escapeHtml(s.code) + '">' + escapeHtml(s.code) + "</button>";
+          }).join("");
+        document.querySelectorAll("#suggestList button").forEach(function(b){
+          b.onclick = function(){
+            searchInput.value = b.getAttribute("data-code");
+            runLookup(searchInput.value);
+          };
+        });
+      } else {
+        document.getElementById("suggestList").innerHTML = "";
+      }
+    }
+  }
+
+  var searchDebounce = null;
+  searchInput.addEventListener("input", function(){
+    clearTimeout(searchDebounce);
+    var val = searchInput.value;
+    searchDebounce = setTimeout(function(){ runLookup(val); }, 120);
+  });
+
+  // ---------- Quet QR bang camera (dung chung cho ca 2 che do) ----------
+
+  // Neu QR chua ma la 1 duong link (vd https://.../san-pham/A24002TS),
+  // tu dong lay phan cuoi cua duong dan lam ma san pham. Neu la text thuong
+  // thi dung nguyen van.
+  function extractCodeFromScan(raw){
+    try{
+      var url = new URL(raw);
+      var segments = url.pathname.split("/").filter(Boolean);
+      if (segments.length) return decodeURIComponent(segments[segments.length - 1]);
+      return raw;
+    }catch(e){
+      return raw;
+    }
+  }
+
+  // Trinh duyet hien dai (Chrome/Edge tren Android, 1 so ban Safari moi) co san
+  // bo nhan dien QR native cua he thong - manh hon nhieu so vi jsQR (thu vien
+  // JS thuan) trong dieu kien anh choi/mo/xa, vi no dung phan cung/ML cua may.
+  // Neu may khong ho tro thi tu dong dung lai jsQR nhu binh thuong.
+  var nativeDetector = null;
+  if ("BarcodeDetector" in window){
+    try{ nativeDetector = new BarcodeDetector({ formats: ["qr_code"] }); }
+    catch(e){ nativeDetector = null; }
+  }
+
+  // Tao 1 "may quet" gan vao 1 the <video>: tu quan ly camera stream + vong
+  // lap doc frame. onFrame(decodedTextOrNull) duoc goi moi frame - null nghia
+  // la frame nay khong thay QR nao (dung de ben goi biet luc nao "mat dau" QR).
+  function createScanner(videoEl, onFrame){
+    var canvasEl = document.createElement("canvas");
+    var ctx2 = canvasEl.getContext("2d");
+    var stream = null;
+    var loopId = null;
+    var busy = false;
+
+    function handleJsQrFallback(){
+      canvasEl.width = videoEl.videoWidth;
+      canvasEl.height = videoEl.videoHeight;
+      ctx2.drawImage(videoEl, 0, 0, canvasEl.width, canvasEl.height);
+      var imgData = ctx2.getImageData(0, 0, canvasEl.width, canvasEl.height);
+      var result = window.jsQR ? jsQR(imgData.data, imgData.width, imgData.height) : null;
+      onFrame(result && result.data ? extractCodeFromScan(result.data) : null);
+    }
+
+    function loop(){
+      if (!busy && videoEl.readyState === videoEl.HAVE_ENOUGH_DATA){
+        if (nativeDetector){
+          busy = true;
+          nativeDetector.detect(videoEl).then(function(codes){
+            busy = false;
+            onFrame(codes && codes.length ? extractCodeFromScan(codes[0].rawValue) : null);
+          }).catch(function(){
+            busy = false;
+            handleJsQrFallback(); // API loi tren frame nay - thu lai bang jsQR cho chac
+          });
+        } else {
+          handleJsQrFallback();
+        }
+      }
+      loopId = requestAnimationFrame(loop);
+    }
+
+    return {
+      start: async function(){
+        // Xin do phan giai cao hon mac dinh de QR nho/o xa van du net de nhan dien.
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } }
+        });
+        videoEl.srcObject = stream;
+        await videoEl.play();
+        loop();
+      },
+      stop: function(){
+        if (loopId) cancelAnimationFrame(loopId);
+        loopId = null;
+        if (stream){ stream.getTracks().forEach(function(t){ t.stop(); }); stream = null; }
+      },
+      isRunning: function(){ return stream !== null; }
+    };
+  }
+
+  // ---- Che do 1: Tra cuu nhanh (nut hinh vuong canh o tim kiem) ----
+  var scanBtn = document.getElementById("scanBtn");
+  var cameraWrap = document.getElementById("cameraWrap");
+  var cameraMsg = document.getElementById("cameraMsg");
+  var lookupLastSeen = null;
+
+  var lookupScanner = createScanner(document.getElementById("video"), function(decoded){
+    if (decoded){
+      if (decoded !== lookupLastSeen){
+        lookupLastSeen = decoded;
+        if (navigator.vibrate) navigator.vibrate(60);
+        searchInput.value = decoded;
+        runLookup(decoded);
+        cameraMsg.textContent = 'Đã quét: "' + decoded + '" — đưa mã khác vào khung để tiếp tục.';
+      }
+    } else {
+      lookupLastSeen = null;
+    }
+  });
+
+  async function startScan(){
+    try{
+      await lookupScanner.start();
+      cameraWrap.classList.add("on");
+      scanBtn.classList.add("active");
+      cameraMsg.textContent = "Đưa camera vào mã QR trên tem hoặc kệ hàng...";
+    }catch(e){
+      cameraMsg.textContent = "Không mở được camera — bạn có thể gõ mã trực tiếp ở trên.";
+    }
+  }
+  function stopScan(){
+    lookupScanner.stop();
+    lookupLastSeen = null;
+    cameraWrap.classList.remove("on");
+    scanBtn.classList.remove("active");
+    cameraMsg.textContent = "";
+  }
+  scanBtn.addEventListener("click", function(){
+    if (cameraWrap.classList.contains("on")) stopScan(); else startScan();
+  });
+
+  // ---- Che do 2: Quet & dem hang loat (trong modal "+ Them ma") ----
+  var sessionTally = {}; // key -> { code, qty }
+  var countLastSeen = null;
+  var scanCountWrap = document.getElementById("scanCountCameraWrap");
+  var toggleScanCountBtn = document.getElementById("toggleScanCountBtn");
+
+  var countScanMsg = document.getElementById("countScanMsg");
+
+  var countScanner = createScanner(document.getElementById("videoCount"), function(decoded){
+    if (decoded){
+      if (decoded !== countLastSeen){
+        countLastSeen = decoded;
+        if (navigator.vibrate) navigator.vibrate(50);
+        addToSessionTally(decoded);
+      }
+    } else {
+      countLastSeen = null; // mat dau QR khoi khung hinh -> san sang tinh luot tiep theo, ke ca trung ma cu
+    }
+  });
+
+  function addToSessionTally(raw){
+    var key = normalizeKey(raw);
+    if (!key) return;
+    var isNew = !sessionTally[key];
+    if (isNew) sessionTally[key] = { code: raw.trim(), qty: 0 };
+    sessionTally[key].qty += 1;
+    renderTally(key);
+
+    var qtyNow = sessionTally[key].qty;
+    countScanMsg.innerHTML = isNew
+      ? '✅ Vừa quét mã mới: <b class="mono">' + escapeHtml(raw.trim()) + "</b>"
+      : '🔁 Trùng mã <b class="mono">' + escapeHtml(raw.trim()) + '</b> — đã có ' + qtyNow + ' tem loại này';
+  }
+
+  function renderTally(justScannedKey){
+    var keys = Object.keys(sessionTally);
+    var totalScans = 0;
+    keys.forEach(function(k){ totalScans += sessionTally[k].qty; });
+    document.getElementById("tallyTotal").textContent = totalScans;
+    document.getElementById("tallyUnique").textContent = keys.length;
+
+    var listEl = document.getElementById("tallyList");
+    if (keys.length === 0){
+      listEl.innerHTML = '<div class="tally-empty">Chưa quét mã nào trong phiên này.</div>';
+      return;
+    }
+    listEl.innerHTML = keys.sort().map(function(k){
+      var item = sessionTally[k];
+      var highlight = k === justScannedKey ? ' style="border-color:var(--available); background:var(--available-bg);"' : "";
+      return '<div class="tally-row"' + highlight + '><span class="tally-code">' + escapeHtml(item.code) +
+        '</span><span class="tally-qty">x' + item.qty + '</span></div>';
+    }).join("");
+  }
+
+  async function startCountScan(){
+    try{
+      countScanMsg.textContent = "Đưa từng tem vào khung hình...";
+      await countScanner.start();
+      scanCountWrap.classList.add("on");
+      toggleScanCountBtn.textContent = "Dừng quét";
+    }catch(e){
+      countScanMsg.textContent = "Không mở được camera trên trang này (xem hướng dẫn bên dưới).";
+      showToast("Không mở được camera.");
+    }
+  }
+  function stopCountScan(){
+    countScanner.stop();
+    countLastSeen = null;
+    scanCountWrap.classList.remove("on");
+    toggleScanCountBtn.textContent = "Bắt đầu quét";
+  }
+  toggleScanCountBtn.addEventListener("click", function(){
+    if (scanCountWrap.classList.contains("on")) stopCountScan(); else startCountScan();
+  });
+  document.getElementById("resetTallyBtn").addEventListener("click", function(){
+    if (Object.keys(sessionTally).length && !confirm("Xoá toàn bộ kết quả đã quét trong phiên này?")) return;
+    sessionTally = {};
+    renderTally();
+  });
+
+  // ---------- Modal them / nhap danh sach ----------
+  var overlay = document.getElementById("overlay");
+  function openSheet(defaultTab){
+    overlay.classList.add("show");
+    switchTab(defaultTab || "single");
+    document.getElementById("singleCode").value = "";
+    document.getElementById("singleQty").value = 1;
+    document.getElementById("bulkText").value = "";
+  }
+  function closeSheet(){
+    overlay.classList.remove("show");
+    stopCountScan(); // dong camera khi dong modal, tranh ton pin/camera chay ngam
+  }
+
+  function switchTab(tab){
+    document.querySelectorAll(".tab-btn").forEach(function(b){
+      b.classList.toggle("active", b.getAttribute("data-tab") === tab);
+    });
+    document.getElementById("tabSingle").style.display = tab === "single" ? "block" : "none";
+    document.getElementById("tabBulk").style.display = tab === "bulk" ? "block" : "none";
+    document.getElementById("tabScanCount").style.display = tab === "scan" ? "block" : "none";
+    if (tab !== "scan") stopCountScan(); // roi tab quet -> tat camera, giu lai ket qua da dem
+  }
+  document.querySelectorAll(".tab-btn").forEach(function(b){
+    b.addEventListener("click", function(){ switchTab(b.getAttribute("data-tab")); });
+  });
+
+  document.getElementById("openSheetBtn").addEventListener("click", function(){ openSheet("single"); });
+  document.getElementById("fabBtn").addEventListener("click", function(){ openSheet("bulk"); });
+  document.getElementById("emptyImportBtn").addEventListener("click", function(){ openSheet("bulk"); });
+  document.getElementById("openScanCountLink").addEventListener("click", function(){ openSheet("scan"); });
+  document.getElementById("cancelSheetBtn").addEventListener("click", closeSheet);
+  overlay.addEventListener("click", function(e){ if (e.target === overlay) closeSheet(); });
+
+  document.getElementById("saveSheetBtn").addEventListener("click", function(){
+    var activeTab = document.querySelector(".tab-btn.active").getAttribute("data-tab");
+    var addedCount = 0;
+
+    if (activeTab === "single"){
+      var code = document.getElementById("singleCode").value.trim();
+      var qty = parseInt(document.getElementById("singleQty").value, 10);
+      if (!code){ showToast("Nhập mã sản phẩm trước đã."); return; }
+      if (isNaN(qty) || qty < 0) qty = 1;
+      upsertCode(code, qty);
+      addedCount = 1;
+    } else if (activeTab === "bulk"){
+      var lines = document.getElementById("bulkText").value.split("\n");
+      lines.forEach(function(line){
+        line = line.trim();
+        if (!line) return;
+        var parts = line.split(",");
+        var code = parts[0].trim();
+        var qty = parts.length > 1 ? parseInt(parts[1], 10) : 1;
+        if (isNaN(qty) || qty < 0) qty = 1;
+        if (code){ upsertCode(code, qty); addedCount++; }
+      });
+      if (addedCount === 0){ showToast("Chưa dán danh sách mã nào."); return; }
+    } else if (activeTab === "scan"){
+      var tallyKeys = Object.keys(sessionTally);
+      if (tallyKeys.length === 0){ showToast("Chưa quét được mã nào."); return; }
+      tallyKeys.forEach(function(k){
+        upsertCode(sessionTally[k].code, sessionTally[k].qty);
+        addedCount++;
+      });
+      stopCountScan();
+      sessionTally = {};
+      renderTally();
+    }
+
+    saveInventory();
+    renderAll();
+    closeSheet();
+    showToast("Đã lưu " + addedCount + " mã vào kho.");
+  });
+
+  // ---------- Khoi dong ----------
+  if (!hasClaudeStorage && location.protocol === "file:"){
+    // Mo truc tiep file HTML tren may/dien thoai (khong qua dia chi https) -
+    // camera se bi trinh duyet chan. Bao truoc de nguoi dung khong tuong lam sai.
+    cameraMsg.textContent = "⚠️ Đang mở file trực tiếp nên camera sẽ bị chặn — xem hướng dẫn host lên HTTPS để quét được.";
+  }
+  loadInventory();
+})();
+</script>
+</body>
+</html>
