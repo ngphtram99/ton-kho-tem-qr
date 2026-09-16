@@ -363,6 +363,44 @@
     cursor:pointer;
   }
   .tab-btn.active{ border-color: var(--ink); color: var(--ink); background:#fff; }
+
+  .store-tab-btn{
+    flex:1;
+    min-width: 46%;
+    padding:9px;
+    border-radius:8px;
+    border:1.5px solid var(--line);
+    background: var(--bg);
+    font-size:13px;
+    font-weight:600;
+    color: var(--ink-soft);
+    cursor:pointer;
+  }
+  .store-tab-btn.active{ border-color: var(--ink); color: var(--ink); background:#fff; }
+
+  .store-row{
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 11px 13px;
+    margin-bottom: 8px;
+  }
+  .store-row-top{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:8px;
+  }
+  .store-row-name{ font-weight:600; font-size:14px; }
+  .store-row-meta{ font-size:12px; color: var(--ink-soft); margin-top:2px; }
+  .store-row-codes{
+    margin-top:8px;
+    font-family:"IBM Plex Mono", monospace;
+    font-size:12px;
+    color: var(--ink-soft);
+    line-height:1.6;
+    word-break: break-all;
+  }
   textarea, input.field{
     width:100%;
     border-radius: 10px;
@@ -501,6 +539,8 @@
   </div>
   <button id="openLinkMapLink" style="margin-top:8px; background:none; border:none; padding:0; font-size:12.5px; color:var(--ink-soft); text-decoration:underline; cursor:pointer; font-family:inherit;">🔗 Bảng đối chiếu mã ↔ link QR (<span id="linkMapCountHeader">0</span> mã)</button>
   <button id="openExportLink" style="margin-top:8px; margin-left:14px; background:none; border:none; padding:0; font-size:12.5px; color:var(--ink-soft); text-decoration:underline; cursor:pointer; font-family:inherit;">📄 Xuất báo cáo</button>
+  <br/>
+  <button id="openStoreLink" style="margin-top:8px; background:none; border:none; padding:0; font-size:12.5px; color:var(--ink-soft); text-decoration:underline; cursor:pointer; font-family:inherit;">🏬 Kiểm kê theo cửa hàng</button>
 </header>
 
 <main>
@@ -634,6 +674,49 @@
   </div>
 </div>
 
+<div id="storeOverlay" class="modal-overlay">
+  <div id="storeSheet" class="modal-sheet">
+    <div class="sheet-handle"></div>
+    <h3>Kiểm kê theo cửa hàng</h3>
+    <p class="hint">Quét các tem đang dán tại 1 cửa hàng cụ thể, lưu riêng theo tên cửa hàng đó.</p>
+
+    <div class="tabs">
+      <button class="store-tab-btn active" data-store-tab="scan">Quét tại đây</button>
+      <button class="store-tab-btn" data-store-tab="list">Danh sách cửa hàng</button>
+    </div>
+
+    <div id="storeTabScan">
+      <div class="field-row">
+        <label>Tên cửa hàng</label>
+        <input class="field" id="storeNameInput" list="storeNamesList" placeholder="VD: Đại Quang Minh - Q7" autocomplete="off" />
+        <datalist id="storeNamesList"></datalist>
+      </div>
+
+      <div id="storeCameraWrap" class="camera-box">
+        <video id="videoStore" playsinline muted></video>
+        <div class="scan-frame"></div>
+      </div>
+      <div id="storeScanMsg" style="font-size:12.5px; color:var(--ink-soft); margin-top:8px; min-height:16px;"></div>
+      <button class="btn" id="toggleStoreScanBtn" style="width:100%; margin-top:2px;" disabled>Nhập tên cửa hàng trước đã</button>
+
+      <div class="scan-tally-header">
+        <span>Đã quét: <b id="storeTallyTotal">0</b> lượt · <b id="storeTallyUnique">0</b> mã khác nhau</span>
+        <button class="btn ghost small" id="resetStoreTallyBtn">Xoá hết</button>
+      </div>
+      <div id="storeTallyList"><div class="tally-empty">Chưa quét mã nào trong phiên này.</div></div>
+    </div>
+
+    <div id="storeTabList" style="display:none;">
+      <div id="storeAuditList"><div class="tally-empty">Chưa có cửa hàng nào được kiểm kê.</div></div>
+    </div>
+
+    <div class="sheet-actions">
+      <button class="btn ghost" id="cancelStoreBtn">Đóng</button>
+      <button class="btn" id="saveStoreBtn">Lưu kiểm kê cửa hàng này</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js"></script>
@@ -759,6 +842,40 @@
       }
     }, 250);
     document.getElementById("linkMapCountHeader").textContent = Object.keys(linkMap).length;
+  }
+
+  // ---------- Kiem ke theo cua hang ----------
+  var STORE_AUDITS_KEY = "storeAudits";
+  // storeAudits: { storeKey: { name, codes: { codeKey: { code, qty } }, lastVisited } }
+  var storeAudits = {};
+
+  async function loadStoreAudits(){
+    try{
+      var raw = await storageGet(STORE_AUDITS_KEY);
+      if (raw) storeAudits = JSON.parse(raw);
+    }catch(e){
+      storeAudits = {};
+    }
+    populateStoreNamesDatalist();
+    renderStoreAuditList();
+  }
+
+  var saveStoreAuditsTimer = null;
+  function saveStoreAudits(){
+    clearTimeout(saveStoreAuditsTimer);
+    saveStoreAuditsTimer = setTimeout(async function(){
+      try{
+        await storageSet(STORE_AUDITS_KEY, JSON.stringify(storeAudits));
+      }catch(e){
+        showToast("Không lưu được dữ liệu cửa hàng, thử lại sau.");
+      }
+    }, 250);
+  }
+
+  function populateStoreNamesDatalist(){
+    var list = document.getElementById("storeNamesList");
+    var names = Object.keys(storeAudits).map(function(k){ return storeAudits[k].name; });
+    list.innerHTML = names.map(function(n){ return '<option value="' + escapeHtml(n) + '"></option>'; }).join("");
   }
 
   // ---------- Cac thao tac tren kho ----------
@@ -1266,6 +1383,234 @@
     renderTally();
   });
 
+  // ---- Che do 3: Kiem ke tai 1 cua hang cu the ----
+  var storeSessionTally = {}; // codeKey -> { code, qty }
+  var storeLastSeen = null;
+  var storeLastSeenAt = 0;
+  var storeCameraWrap = document.getElementById("storeCameraWrap");
+  var toggleStoreScanBtn = document.getElementById("toggleStoreScanBtn");
+  var storeScanMsg = document.getElementById("storeScanMsg");
+  var storeNameInput = document.getElementById("storeNameInput");
+
+  var storeScanner = createScanner(document.getElementById("videoStore"), function(rawResult){
+    var result = resolveScannedCode(rawResult);
+    var now = Date.now();
+    if (result){
+      if (result.code !== storeLastSeen){
+        storeLastSeen = result.code;
+        if (navigator.vibrate) navigator.vibrate(50);
+        addToStoreTally(result.code, result.fromLink);
+      }
+      storeLastSeenAt = now;
+    } else if (storeLastSeen !== null && now - storeLastSeenAt > SCAN_ABSENCE_GRACE_MS){
+      storeLastSeen = null;
+    }
+  });
+
+  function addToStoreTally(raw, fromLink){
+    var key = normalizeKey(raw);
+    if (!key) return;
+    var isNew = !storeSessionTally[key];
+    if (isNew) storeSessionTally[key] = { code: raw.trim(), qty: 0, fromLink: !!fromLink };
+    else if (fromLink) storeSessionTally[key].fromLink = true;
+    storeSessionTally[key].qty += 1;
+    renderStoreTally(key);
+
+    var qtyNow = storeSessionTally[key].qty;
+    var baseMsg = isNew
+      ? '✅ Vừa quét mã mới: <b class="mono">' + escapeHtml(raw.trim()) + "</b>"
+      : '🔁 Trùng mã <b class="mono">' + escapeHtml(raw.trim()) + '</b> — đã có ' + qtyNow + ' tem loại này';
+    storeScanMsg.innerHTML = fromLink
+      ? baseMsg + ' <span style="color:var(--out); font-weight:600;">— ⚠️ tách từ link, kiểm tra lại!</span>'
+      : baseMsg;
+  }
+
+  function renderStoreTally(justScannedKey){
+    var keys = Object.keys(storeSessionTally);
+    var totalScans = 0;
+    keys.forEach(function(k){ totalScans += storeSessionTally[k].qty; });
+    document.getElementById("storeTallyTotal").textContent = totalScans;
+    document.getElementById("storeTallyUnique").textContent = keys.length;
+
+    var listEl = document.getElementById("storeTallyList");
+    if (keys.length === 0){
+      listEl.innerHTML = '<div class="tally-empty">Chưa quét mã nào trong phiên này.</div>';
+      return;
+    }
+    listEl.innerHTML = keys.sort().map(function(k){
+      var item = storeSessionTally[k];
+      var highlight = k === justScannedKey ? ' style="border-color:var(--available); background:var(--available-bg);"' : "";
+      var warnBadge = item.fromLink
+        ? ' <span style="color:var(--out); font-size:11px; font-weight:700;" title="Mã này tách ra từ 1 đường link - chạm để sửa lại">⚠️ từ link</span>'
+        : "";
+      return '<div class="tally-row" data-store-key="' + k + '"' + highlight + '>' +
+        '<span class="tally-code" data-store-act="edit" title="Chạm để sửa lại mã cho đúng">' + escapeHtml(item.code) + warnBadge + '</span>' +
+        '<span class="tally-qty">x' + item.qty + '</span>' +
+        '<button class="tally-del" data-store-act="del" title="Xoá khỏi phiên quét">✕</button>' +
+      '</div>';
+    }).join("");
+  }
+
+  document.getElementById("storeTallyList").addEventListener("click", function(e){
+    var target = e.target.closest("[data-store-act]");
+    if (!target) return;
+    var row = e.target.closest(".tally-row");
+    if (!row) return;
+    var key = row.getAttribute("data-store-key");
+    var current = storeSessionTally[key];
+    if (!current) return;
+
+    if (target.getAttribute("data-store-act") === "del"){
+      delete storeSessionTally[key];
+      renderStoreTally();
+    } else if (target.getAttribute("data-store-act") === "edit"){
+      var newCode = prompt("Sửa lại đúng mã sản phẩm in trên tem:", current.code);
+      if (newCode === null) return;
+      newCode = newCode.trim();
+      if (!newCode) return;
+      var newKey = normalizeKey(newCode);
+      delete storeSessionTally[key];
+      if (storeSessionTally[newKey]) storeSessionTally[newKey].qty += current.qty;
+      else storeSessionTally[newKey] = { code: newCode, qty: current.qty, fromLink: false };
+      renderStoreTally();
+    }
+  });
+
+  document.getElementById("resetStoreTallyBtn").addEventListener("click", function(){
+    if (Object.keys(storeSessionTally).length && !confirm("Xoá toàn bộ kết quả đã quét trong phiên này?")) return;
+    storeSessionTally = {};
+    renderStoreTally();
+  });
+
+  async function startStoreScan(){
+    try{
+      storeScanMsg.textContent = "Đưa từng tem vào khung hình...";
+      await storeScanner.start();
+      storeCameraWrap.classList.add("on");
+      toggleStoreScanBtn.textContent = "Dừng quét";
+      storeNameInput.disabled = true; // khoa ten cua hang trong luc quet, tranh nham lan dang kiem ke cho ai
+    }catch(e){
+      storeScanMsg.textContent = "Không mở được camera trên trang này.";
+      showToast("Không mở được camera.");
+    }
+  }
+  function stopStoreScan(){
+    storeScanner.stop();
+    storeLastSeen = null;
+    storeCameraWrap.classList.remove("on");
+    toggleStoreScanBtn.textContent = "Bắt đầu quét";
+    storeNameInput.disabled = false;
+  }
+  toggleStoreScanBtn.addEventListener("click", function(){
+    if (storeCameraWrap.classList.contains("on")) stopStoreScan(); else startStoreScan();
+  });
+  storeNameInput.addEventListener("input", function(){
+    var hasName = storeNameInput.value.trim().length > 0;
+    toggleStoreScanBtn.disabled = !hasName;
+    toggleStoreScanBtn.textContent = hasName ? "Bắt đầu quét" : "Nhập tên cửa hàng trước đã";
+  });
+
+  function renderStoreAuditList(){
+    var listEl = document.getElementById("storeAuditList");
+    var keys = Object.keys(storeAudits);
+    if (keys.length === 0){
+      listEl.innerHTML = '<div class="tally-empty">Chưa có cửa hàng nào được kiểm kê.</div>';
+      return;
+    }
+    keys.sort(function(a, b){ return storeAudits[b].lastVisited - storeAudits[a].lastVisited; });
+    listEl.innerHTML = keys.map(function(k){
+      var store = storeAudits[k];
+      var codeKeys = Object.keys(store.codes);
+      var totalTems = codeKeys.reduce(function(sum, ck){ return sum + store.codes[ck].qty; }, 0);
+      var codesText = codeKeys.sort().map(function(ck){
+        var c = store.codes[ck];
+        return escapeHtml(c.code) + (c.qty > 1 ? " (x" + c.qty + ")" : "");
+      }).join(", ");
+      return (
+        '<div class="store-row" data-store-key="' + k + '">' +
+          '<div class="store-row-top">' +
+            '<div>' +
+              '<div class="store-row-name">' + escapeHtml(store.name) + '</div>' +
+              '<div class="store-row-meta">' + codeKeys.length + ' mã · ' + totalTems + ' tem · cập nhật ' + formatDateVN(store.lastVisited) + '</div>' +
+            '</div>' +
+            '<button class="del-btn" data-store-list-act="del" title="Xoá cửa hàng này">✕</button>' +
+          '</div>' +
+          '<div class="store-row-codes">' + codesText + '</div>' +
+        '</div>'
+      );
+    }).join("");
+  }
+
+  document.getElementById("storeAuditList").addEventListener("click", function(e){
+    var target = e.target.closest("[data-store-list-act]");
+    if (!target) return;
+    var row = e.target.closest(".store-row");
+    if (!row) return;
+    var key = row.getAttribute("data-store-key");
+    var store = storeAudits[key];
+    if (!store) return;
+    if (confirm('Xoá toàn bộ dữ liệu kiểm kê của cửa hàng "' + store.name + '"?')){
+      delete storeAudits[key];
+      saveStoreAudits();
+      populateStoreNamesDatalist();
+      renderStoreAuditList();
+    }
+  });
+
+  function switchStoreTab(tab){
+    document.querySelectorAll(".store-tab-btn").forEach(function(b){
+      b.classList.toggle("active", b.getAttribute("data-store-tab") === tab);
+    });
+    document.getElementById("storeTabScan").style.display = tab === "scan" ? "block" : "none";
+    document.getElementById("storeTabList").style.display = tab === "list" ? "block" : "none";
+    document.getElementById("saveStoreBtn").style.display = tab === "scan" ? "inline-block" : "none";
+    if (tab !== "scan") stopStoreScan();
+    if (tab === "list") renderStoreAuditList();
+  }
+  document.querySelectorAll(".store-tab-btn").forEach(function(b){
+    b.addEventListener("click", function(){ switchStoreTab(b.getAttribute("data-store-tab")); });
+  });
+
+  var storeOverlay = document.getElementById("storeOverlay");
+  function openStoreSheet(){
+    storeOverlay.classList.add("show");
+    switchStoreTab("scan");
+    populateStoreNamesDatalist();
+  }
+  function closeStoreSheet(){
+    storeOverlay.classList.remove("show");
+    stopStoreScan();
+  }
+  document.getElementById("openStoreLink").addEventListener("click", openStoreSheet);
+  document.getElementById("cancelStoreBtn").addEventListener("click", closeStoreSheet);
+  storeOverlay.addEventListener("click", function(e){ if (e.target === storeOverlay) closeStoreSheet(); });
+
+  document.getElementById("saveStoreBtn").addEventListener("click", function(){
+    var name = storeNameInput.value.trim();
+    if (!name){ showToast("Nhập tên cửa hàng trước đã."); return; }
+    var tallyKeys = Object.keys(storeSessionTally);
+    if (tallyKeys.length === 0){ showToast("Chưa quét được mã nào."); return; }
+
+    var storeKey = normalizeKey(name);
+    if (!storeAudits[storeKey]) storeAudits[storeKey] = { name: name, codes: {}, lastVisited: Date.now() };
+    var store = storeAudits[storeKey];
+    store.name = name; // cap nhat lai ten hien thi (phong khi go hoa/thuong khac lan truoc)
+    store.lastVisited = Date.now();
+    tallyKeys.forEach(function(k){
+      var scanned = storeSessionTally[k];
+      if (store.codes[k]) store.codes[k].qty += scanned.qty;
+      else store.codes[k] = { code: scanned.code, qty: scanned.qty };
+    });
+
+    saveStoreAudits();
+    populateStoreNamesDatalist();
+    stopStoreScan();
+    storeSessionTally = {};
+    renderStoreTally();
+    storeScanMsg.textContent = "";
+    showToast('Đã lưu kiểm kê cho "' + name + '": ' + tallyKeys.length + ' mã.');
+  });
+
   // ---------- Modal them / nhap danh sach ----------
   var overlay = document.getElementById("overlay");
   function openSheet(defaultTab){
@@ -1441,6 +1786,7 @@
     cameraMsg.textContent = "⚠️ Đang mở file trực tiếp nên camera sẽ bị chặn — xem hướng dẫn host lên HTTPS để quét được.";
   }
   loadLinkMap();
+  loadStoreAudits();
   loadInventory();
 })();
 </script>
