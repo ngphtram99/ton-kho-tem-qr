@@ -1050,9 +1050,12 @@
   var cameraWrap = document.getElementById("cameraWrap");
   var cameraMsg = document.getElementById("cameraMsg");
   var lookupLastSeen = null;
+  var lookupLastSeenAt = 0;
+  var SCAN_ABSENCE_GRACE_MS = 900; // cho phep "mat dau" QR toi da tung nay ms (rung tay/mo frame) ma khong tinh la doi sang ma khac
 
   var lookupScanner = createScanner(document.getElementById("video"), function(rawResult){
     var result = resolveScannedCode(rawResult);
+    var now = Date.now();
     if (result){
       if (result.code !== lookupLastSeen){
         lookupLastSeen = result.code;
@@ -1063,7 +1066,8 @@
           ? '⚠️ Đã quét: "' + result.code + '" (tách từ 1 link — có thể không phải mã thật, kiểm tra lại).'
           : 'Đã quét: "' + result.code + '" — đưa mã khác vào khung để tiếp tục.';
       }
-    } else {
+      lookupLastSeenAt = now;
+    } else if (lookupLastSeen !== null && now - lookupLastSeenAt > SCAN_ABSENCE_GRACE_MS){
       lookupLastSeen = null;
     }
   });
@@ -1092,6 +1096,7 @@
   // ---- Che do 2: Quet & dem hang loat (trong modal "+ Them ma") ----
   var sessionTally = {}; // key -> { code, qty }
   var countLastSeen = null;
+  var countLastSeenAt = 0;
   var scanCountWrap = document.getElementById("scanCountCameraWrap");
   var toggleScanCountBtn = document.getElementById("toggleScanCountBtn");
 
@@ -1099,14 +1104,18 @@
 
   var countScanner = createScanner(document.getElementById("videoCount"), function(rawResult){
     var result = resolveScannedCode(rawResult);
+    var now = Date.now();
     if (result){
       if (result.code !== countLastSeen){
         countLastSeen = result.code;
         if (navigator.vibrate) navigator.vibrate(50);
         addToSessionTally(result.code, result.fromLink);
       }
-    } else {
-      countLastSeen = null; // mat dau QR khoi khung hinh -> san sang tinh luot tiep theo, ke ca trung ma cu
+      countLastSeenAt = now; // van con thay QR (du cu hay moi) - cap nhat moc thoi gian con hoat dong
+    } else if (countLastSeen !== null && now - countLastSeenAt > SCAN_ABSENCE_GRACE_MS){
+      // Chi thuc su coi la "mat dau" (san sang tinh luot moi) sau khi qua
+      // khoang dem nay - tranh 1-2 frame mo/rung tay lam dem trung 1 tem.
+      countLastSeen = null;
     }
   });
 
