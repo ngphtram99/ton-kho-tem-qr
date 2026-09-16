@@ -692,6 +692,10 @@
         <datalist id="storeNamesList"></datalist>
       </div>
 
+      <div class="option-group" style="margin-bottom:12px;">
+        <label><input type="checkbox" id="consumeStockToggle" /> Tem này tôi vừa dán từ kho mang theo — trừ vào tồn kho của tôi</label>
+      </div>
+
       <div id="storeCameraWrap" class="camera-box">
         <video id="videoStore" playsinline muted></video>
         <div class="scan-frame"></div>
@@ -1407,22 +1411,64 @@
     }
   });
 
+  // Thu tru 1 tem khoi kho ca nhan cho 1 ma. Tra ve true neu tru thanh cong
+  // (kho co san tem), false neu khong co ma nay trong kho hoac da het.
+  function tryConsumeFromPersonalStock(code){
+    var key = normalizeKey(code);
+    var item = findByKey(key);
+    if (item && item.qty > 0){
+      item.qty -= 1;
+      item.updatedAt = Date.now();
+      saveInventory();
+      renderAll();
+      return true;
+    }
+    return false;
+  }
+
+  // Hoan lai "count" tem vao kho ca nhan cho 1 ma - dung khi nguoi dung xoa/sua
+  // 1 dong da tung bi tru kho, de khong bi mat oan tem trong kho.
+  function refundToPersonalStock(code, count){
+    if (!count) return;
+    var key = normalizeKey(code);
+    var item = findByKey(key);
+    if (item){
+      item.qty += count;
+      item.updatedAt = Date.now();
+    } else {
+      upsertCode(code, count);
+    }
+    saveInventory();
+    renderAll();
+  }
+
   function addToStoreTally(raw, fromLink){
     var key = normalizeKey(raw);
     if (!key) return;
     var isNew = !storeSessionTally[key];
-    if (isNew) storeSessionTally[key] = { code: raw.trim(), qty: 0, fromLink: !!fromLink };
+    if (isNew) storeSessionTally[key] = { code: raw.trim(), qty: 0, fromLink: !!fromLink, consumedCount: 0 };
     else if (fromLink) storeSessionTally[key].fromLink = true;
     storeSessionTally[key].qty += 1;
+
+    var stockLine = "";
+    if (document.getElementById("consumeStockToggle").checked){
+      var ok = tryConsumeFromPersonalStock(storeSessionTally[key].code);
+      if (ok){
+        storeSessionTally[key].consumedCount += 1;
+        stockLine = '<br/><span style="color:var(--available);">📦 Đã trừ 1 tem trong kho của bạn.</span>';
+      } else {
+        stockLine = '<br/><span style="color:var(--out); font-weight:600;">📦 Kho không có/đã hết mã này — KHÔNG trừ được, kiểm tra lại kho!</span>';
+      }
+    }
+
     renderStoreTally(key);
 
     var qtyNow = storeSessionTally[key].qty;
     var baseMsg = isNew
       ? '✅ Vừa quét mã mới: <b class="mono">' + escapeHtml(raw.trim()) + "</b>"
       : '🔁 Trùng mã <b class="mono">' + escapeHtml(raw.trim()) + '</b> — đã có ' + qtyNow + ' tem loại này';
-    storeScanMsg.innerHTML = fromLink
-      ? baseMsg + ' <span style="color:var(--out); font-weight:600;">— ⚠️ tách từ link, kiểm tra lại!</span>'
-      : baseMsg;
+    var linkWarn = fromLink ? ' <span style="color:var(--out); font-weight:600;">— ⚠️ tách từ link, kiểm tra lại!</span>' : "";
+    storeScanMsg.innerHTML = baseMsg + linkWarn + stockLine;
   }
 
   function renderStoreTally(justScannedKey){
@@ -1443,8 +1489,11 @@
       var warnBadge = item.fromLink
         ? ' <span style="color:var(--out); font-size:11px; font-weight:700;" title="Mã này tách ra từ 1 đường link - chạm để sửa lại">⚠️ từ link</span>'
         : "";
+      var stockBadge = item.consumedCount
+        ? ' <span style="color:var(--available); font-size:11px; font-weight:700;" title="Đã trừ ' + item.consumedCount + ' tem trong kho cá nhân">📦-' + item.consumedCount + '</span>'
+        : "";
       return '<div class="tally-row" data-store-key="' + k + '"' + highlight + '>' +
-        '<span class="tally-code" data-store-act="edit" title="Chạm để sửa lại mã cho đúng">' + escapeHtml(item.code) + warnBadge + '</span>' +
+        '<span class="tally-code" data-store-act="edit" title="Chạm để sửa lại mã cho đúng">' + escapeHtml(item.code) + warnBadge + stockBadge + '</span>' +
         '<span class="tally-qty">x' + item.qty + '</span>' +
         '<button class="tally-del" data-store-act="del" title="Xoá khỏi phiên quét">✕</button>' +
       '</div>';
@@ -1461,6 +1510,10 @@
     if (!current) return;
 
     if (target.getAttribute("data-store-act") === "del"){
+      if (current.consumedCount){
+        refundToPersonalStock(current.code, current.consumedCount);
+        showToast("Đã hoàn lại " + current.consumedCount + " tem vào kho.");
+      }
       delete storeSessionTally[key];
       renderStoreTally();
     } else if (target.getAttribute("data-store-act") === "edit"){
@@ -1469,17 +1522,28 @@
       newCode = newCode.trim();
       if (!newCode) return;
       var newKey = normalizeKey(newCode);
+      if (current.consumedCount){
+        refundToPersonalStock(current.code, current.consumedCount);
+        showToast("Đã hoàn lại " + current.consumedCount + " tem vào kho do đổi mã — bật lại công tắc và quét lại nếu cần trừ tiếp cho mã đúng.");
+      }
       delete storeSessionTally[key];
       if (storeSessionTally[newKey]) storeSessionTally[newKey].qty += current.qty;
-      else storeSessionTally[newKey] = { code: newCode, qty: current.qty, fromLink: false };
+      else storeSessionTally[newKey] = { code: newCode, qty: current.qty, fromLink: false, consumedCount: 0 };
       renderStoreTally();
     }
   });
 
   document.getElementById("resetStoreTallyBtn").addEventListener("click", function(){
-    if (Object.keys(storeSessionTally).length && !confirm("Xoá toàn bộ kết quả đã quét trong phiên này?")) return;
+    var keys = Object.keys(storeSessionTally);
+    if (keys.length && !confirm("Xoá toàn bộ kết quả đã quét trong phiên này? (Tem đã trừ kho sẽ được hoàn lại)")) return;
+    var refunded = 0;
+    keys.forEach(function(k){
+      var it = storeSessionTally[k];
+      if (it.consumedCount){ refundToPersonalStock(it.code, it.consumedCount); refunded += it.consumedCount; }
+    });
     storeSessionTally = {};
     renderStoreTally();
+    if (refunded) showToast("Đã hoàn lại " + refunded + " tem vào kho.");
   });
 
   async function startStoreScan(){
@@ -1578,6 +1642,27 @@
     populateStoreNamesDatalist();
   }
   function closeStoreSheet(){
+    // Con du lieu quet chua luu -> hoi lai, vi neu da tru kho ma khong luu thi
+    // tem bi mat oan (kho giam nhung khong ghi nhan da dan o cua hang nao).
+    var pendingKeys = Object.keys(storeSessionTally);
+    if (pendingKeys.length){
+      var pendingConsumed = 0;
+      pendingKeys.forEach(function(k){ pendingConsumed += (storeSessionTally[k].consumedCount || 0); });
+      var msg = pendingConsumed
+        ? "Bạn còn " + pendingKeys.length + " mã đã quét chưa lưu, trong đó đã trừ " + pendingConsumed + " tem khỏi kho.\n\nĐóng lại sẽ HOÀN tem về kho và bỏ kết quả quét. Tiếp tục?"
+        : "Bạn còn " + pendingKeys.length + " mã đã quét chưa lưu. Đóng lại sẽ bỏ kết quả quét. Tiếp tục?";
+      if (!confirm(msg)) return;
+
+      var refunded = 0;
+      pendingKeys.forEach(function(k){
+        var it = storeSessionTally[k];
+        if (it.consumedCount){ refundToPersonalStock(it.code, it.consumedCount); refunded += it.consumedCount; }
+      });
+      storeSessionTally = {};
+      renderStoreTally();
+      storeScanMsg.textContent = "";
+      if (refunded) showToast("Đã hoàn lại " + refunded + " tem vào kho.");
+    }
     storeOverlay.classList.remove("show");
     stopStoreScan();
   }
@@ -1602,13 +1687,19 @@
       else store.codes[k] = { code: scanned.code, qty: scanned.qty };
     });
 
+    var totalConsumed = 0;
+    tallyKeys.forEach(function(k){ totalConsumed += (storeSessionTally[k].consumedCount || 0); });
+
     saveStoreAudits();
     populateStoreNamesDatalist();
     stopStoreScan();
     storeSessionTally = {};
     renderStoreTally();
     storeScanMsg.textContent = "";
-    showToast('Đã lưu kiểm kê cho "' + name + '": ' + tallyKeys.length + ' mã.');
+    showToast(
+      'Đã lưu kiểm kê cho "' + name + '": ' + tallyKeys.length + ' mã' +
+      (totalConsumed ? ' · đã trừ ' + totalConsumed + ' tem khỏi kho.' : '.')
+    );
   });
 
   // ---------- Modal them / nhap danh sach ----------
