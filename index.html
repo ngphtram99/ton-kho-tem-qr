@@ -349,7 +349,8 @@
   }
   #sheet h3{ margin:0 0 4px; font-size:16px; }
   #sheet p.hint{ margin:0 0 12px; font-size:12.5px; color: var(--ink-soft); }
-  .tabs{ display:flex; gap:6px; margin-bottom:14px; }
+  .tabs{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }
+  .tab-btn{ min-width: 46%; }
   .tab-btn{
     flex:1;
     padding:9px;
@@ -425,6 +426,10 @@
     font-family:"IBM Plex Mono", monospace;
     font-size: 13px;
     word-break: break-all;
+    flex:1;
+    text-decoration: underline dotted;
+    text-underline-offset: 3px;
+    cursor:pointer;
   }
   .tally-row .tally-qty{
     font-family:"IBM Plex Mono", monospace;
@@ -432,6 +437,18 @@
     font-size: 13px;
     flex-shrink:0;
     margin-left:10px;
+  }
+  .tally-del{
+    flex-shrink:0;
+    width:22px; height:22px;
+    margin-left:8px;
+    border-radius:7px;
+    border:1.5px solid var(--line);
+    background: var(--surface);
+    color: var(--out);
+    font-size:13px;
+    line-height:1;
+    cursor:pointer;
   }
   .tally-empty{
     font-size: 12.5px;
@@ -466,6 +483,7 @@
     <span>Còn tem: <b id="statAvailable">0</b></span>
     <span>Đã hết: <b id="statOut">0</b></span>
   </div>
+  <button id="openLinkMapLink" style="margin-top:8px; background:none; border:none; padding:0; font-size:12.5px; color:var(--ink-soft); text-decoration:underline; cursor:pointer; font-family:inherit;">🔗 Bảng đối chiếu mã ↔ link QR (<span id="linkMapCountHeader">0</span> mã)</button>
 </header>
 
 <main>
@@ -515,6 +533,7 @@
       <button class="tab-btn active" data-tab="single">Thêm 1 mã</button>
       <button class="tab-btn" data-tab="bulk">Dán nhiều mã</button>
       <button class="tab-btn" data-tab="scan">Quét &amp; đếm</button>
+      <button class="tab-btn" data-tab="map">Đối chiếu link</button>
     </div>
 
     <div id="tabSingle">
@@ -551,6 +570,14 @@
       <div id="tallyList"><div class="tally-empty">Chưa quét mã nào trong phiên này.</div></div>
     </div>
 
+    <div id="tabLinkMap" style="display:none;">
+      <p class="hint" style="margin-top:0;">Dán 2 cột "Mã gạch" và "Link trong QR" từ Google Sheet của bạn (bôi đen 2 cột đó trong Sheet, Ctrl+C, rồi dán vào đây). Dán cả bảng đầy đủ cũng được — hệ thống tự lọc đúng 2 cột cần dùng.</p>
+      <div class="field-row">
+        <textarea id="linkMapText" rows="8" placeholder="S36058D	https://app.qrcode-solution.com/#/scanner/BjRxVX&#10;F85020RH	https://app.qrcode-solution.com/#/scanner/9TdZW7"></textarea>
+      </div>
+      <p class="hint">Hiện đang có <b id="linkMapCount">0</b> mã trong bảng đối chiếu. Dán bảng mới sẽ gộp thêm/ghi đè theo mã trùng, không xoá dữ liệu cũ.</p>
+    </div>
+
     <div class="sheet-actions">
       <button class="btn ghost" id="cancelSheetBtn">Huỷ</button>
       <button class="btn" id="saveSheetBtn">Lưu vào kho</button>
@@ -566,7 +593,9 @@
   "use strict";
 
   var STORAGE_KEY = "temInventory";
+  var LINK_MAP_KEY = "temLinkMap";
   var inventory = []; // { code, key, qty, updatedAt }
+  var linkMap = {}; // shortId (da chuan hoa) -> ma gach that (nguyen van, vd "S36058D")
 
   // ---------- Lop luu tru tuong thich 2 moi truong ----------
   // Khi mo trong Claude: dung window.storage (co san). Khi tai file ve mo
@@ -654,6 +683,32 @@
         showToast("Không lưu được dữ liệu, thử lại sau.");
       }
     }, 250);
+  }
+
+  async function loadLinkMap(){
+    try{
+      var raw = await storageGet(LINK_MAP_KEY);
+      if (raw) linkMap = JSON.parse(raw);
+    }catch(e){
+      linkMap = {};
+    }
+    var el = document.getElementById("linkMapCountHeader");
+    if (el) el.textContent = Object.keys(linkMap).length;
+    var el2 = document.getElementById("linkMapCount");
+    if (el2) el2.textContent = Object.keys(linkMap).length;
+  }
+
+  var saveLinkMapTimer = null;
+  function saveLinkMap(){
+    clearTimeout(saveLinkMapTimer);
+    saveLinkMapTimer = setTimeout(async function(){
+      try{
+        await storageSet(LINK_MAP_KEY, JSON.stringify(linkMap));
+      }catch(e){
+        showToast("Không lưu được bảng đối chiếu, thử lại sau.");
+      }
+    }, 250);
+    document.getElementById("linkMapCountHeader").textContent = Object.keys(linkMap).length;
   }
 
   // ---------- Cac thao tac tren kho ----------
@@ -852,15 +907,76 @@
   // Neu QR chua ma la 1 duong link (vd https://.../san-pham/A24002TS),
   // tu dong lay phan cuoi cua duong dan lam ma san pham. Neu la text thuong
   // thi dung nguyen van.
+  // Tra ve { code, fromLink }. fromLink=true nghia la QR chua 1 duong link va
+  // ma la doan cuoi tach ra tu link do (khong chac chan la ma san pham that -
+  // vd link cua dich vu QR ben thu 3 nhu qrcode-solution.com, ma ho gan
+  // khong lien quan chu "ma san pham" in tren tem). fromLink=false nghia la
+  // QR chua thang van ban (khong phai URL) - dang tin cay hon nhieu.
   function extractCodeFromScan(raw){
     try{
       var url = new URL(raw);
-      var segments = url.pathname.split("/").filter(Boolean);
-      if (segments.length) return decodeURIComponent(segments[segments.length - 1]);
-      return raw;
+      var pathSegments = url.pathname.split("/").filter(Boolean);
+      if (pathSegments.length) return { code: decodeURIComponent(pathSegments[pathSegments.length - 1]), fromLink: true };
+
+      // Nhieu trang dung kieu dinh tuyen "#/scanner/MA" (SPA hash-routing) -
+      // pathname luc nay chi la "/", ma thuc su nam trong phan hash.
+      if (url.hash){
+        var hashSegments = url.hash.replace(/^#/, "").split(/[/?]/).filter(Boolean);
+        if (hashSegments.length) return { code: decodeURIComponent(hashSegments[hashSegments.length - 1]), fromLink: true };
+      }
+      return { code: raw, fromLink: true };
     }catch(e){
-      return raw;
+      return { code: raw, fromLink: false };
     }
+  }
+
+  // Neu ma quet duoc la tach tu 1 duong link (fromLink=true), thu tra trong
+  // bang doi chieu (linkMap) xem co ma gach that tuong ung khong. Neu co ->
+  // tra ve ma that, coi nhu dang tin cay (fromLink=false). Neu khong tim
+  // thay -> giu nguyen nhu cu (van canh bao fromLink=true).
+  function resolveScannedCode(result){
+    if (!result || !result.fromLink) return result;
+    var mapped = linkMap[normalizeKey(result.code)];
+    if (mapped) return { code: mapped, fromLink: false };
+    return result;
+  }
+
+  // Phan tich noi dung dan tu Google Sheet (dang tab-separated khi copy tu
+  // Sheets). Tu do tim cot chua link (bat dau http/https) va cot chua ma
+  // gach (chu/so thuong, khong phai link, khong phai so thuan tuy nhu STT).
+  // Ho tro dan ca bang day du (STT, Ma gach, Link trong QR, Link san pham...)
+  // lan chi dan rieng 2 cot Ma gach + Link trong QR.
+  function parseLinkMapPaste(text){
+    var entries = [];
+    var lines = String(text || "").split("\n");
+    lines.forEach(function(line){
+      line = line.replace(/\r$/, "");
+      if (!line.trim()) return;
+      var cols = line.split("\t");
+      if (cols.length < 2) return;
+
+      var linkCol = null;
+      for (var i = 0; i < cols.length; i++){
+        if (/^https?:\/\//i.test(cols[i].trim())) { linkCol = cols[i].trim(); break; }
+      }
+      if (!linkCol) return; // dong nay khong co link nao - co the la dong tieu de, bo qua
+
+      var codeCol = null;
+      for (var j = 0; j < cols.length; j++){
+        var v = cols[j].trim();
+        if (!v || v === linkCol) continue;
+        if (/^https?:\/\//i.test(v)) continue; // bo qua cac cot link khac (vd "Link san pham")
+        if (/^\d+$/.test(v)) continue; // bo qua cot STT (chi toan chu so)
+        codeCol = v;
+        break;
+      }
+      if (!codeCol) return;
+
+      var extracted = extractCodeFromScan(linkCol);
+      if (!extracted.fromLink) return; // khong parse duoc thanh link hop le
+      entries.push({ shortId: normalizeKey(extracted.code), code: codeCol });
+    });
+    return entries;
   }
 
   // Trinh duyet hien dai (Chrome/Edge tren Android, 1 so ban Safari moi) co san
@@ -935,14 +1051,17 @@
   var cameraMsg = document.getElementById("cameraMsg");
   var lookupLastSeen = null;
 
-  var lookupScanner = createScanner(document.getElementById("video"), function(decoded){
-    if (decoded){
-      if (decoded !== lookupLastSeen){
-        lookupLastSeen = decoded;
+  var lookupScanner = createScanner(document.getElementById("video"), function(rawResult){
+    var result = resolveScannedCode(rawResult);
+    if (result){
+      if (result.code !== lookupLastSeen){
+        lookupLastSeen = result.code;
         if (navigator.vibrate) navigator.vibrate(60);
-        searchInput.value = decoded;
-        runLookup(decoded);
-        cameraMsg.textContent = 'Đã quét: "' + decoded + '" — đưa mã khác vào khung để tiếp tục.';
+        searchInput.value = result.code;
+        runLookup(result.code);
+        cameraMsg.textContent = result.fromLink
+          ? '⚠️ Đã quét: "' + result.code + '" (tách từ 1 link — có thể không phải mã thật, kiểm tra lại).'
+          : 'Đã quét: "' + result.code + '" — đưa mã khác vào khung để tiếp tục.';
       }
     } else {
       lookupLastSeen = null;
@@ -978,30 +1097,35 @@
 
   var countScanMsg = document.getElementById("countScanMsg");
 
-  var countScanner = createScanner(document.getElementById("videoCount"), function(decoded){
-    if (decoded){
-      if (decoded !== countLastSeen){
-        countLastSeen = decoded;
+  var countScanner = createScanner(document.getElementById("videoCount"), function(rawResult){
+    var result = resolveScannedCode(rawResult);
+    if (result){
+      if (result.code !== countLastSeen){
+        countLastSeen = result.code;
         if (navigator.vibrate) navigator.vibrate(50);
-        addToSessionTally(decoded);
+        addToSessionTally(result.code, result.fromLink);
       }
     } else {
       countLastSeen = null; // mat dau QR khoi khung hinh -> san sang tinh luot tiep theo, ke ca trung ma cu
     }
   });
 
-  function addToSessionTally(raw){
+  function addToSessionTally(raw, fromLink){
     var key = normalizeKey(raw);
     if (!key) return;
     var isNew = !sessionTally[key];
-    if (isNew) sessionTally[key] = { code: raw.trim(), qty: 0 };
+    if (isNew) sessionTally[key] = { code: raw.trim(), qty: 0, fromLink: !!fromLink };
+    else if (fromLink) sessionTally[key].fromLink = true; // tung it nhat 1 lan tu link -> giu canh bao
     sessionTally[key].qty += 1;
     renderTally(key);
 
     var qtyNow = sessionTally[key].qty;
-    countScanMsg.innerHTML = isNew
+    var baseMsg = isNew
       ? '✅ Vừa quét mã mới: <b class="mono">' + escapeHtml(raw.trim()) + "</b>"
       : '🔁 Trùng mã <b class="mono">' + escapeHtml(raw.trim()) + '</b> — đã có ' + qtyNow + ' tem loại này';
+    countScanMsg.innerHTML = fromLink
+      ? baseMsg + ' <span style="color:var(--out); font-weight:600;">— ⚠️ tách từ link, kiểm tra lại!</span>'
+      : baseMsg;
   }
 
   function renderTally(justScannedKey){
@@ -1019,10 +1143,43 @@
     listEl.innerHTML = keys.sort().map(function(k){
       var item = sessionTally[k];
       var highlight = k === justScannedKey ? ' style="border-color:var(--available); background:var(--available-bg);"' : "";
-      return '<div class="tally-row"' + highlight + '><span class="tally-code">' + escapeHtml(item.code) +
-        '</span><span class="tally-qty">x' + item.qty + '</span></div>';
+      var warnBadge = item.fromLink
+        ? ' <span style="color:var(--out); font-size:11px; font-weight:700;" title="Mã này tách ra từ 1 đường link, có thể không phải mã sản phẩm thật - chạm để sửa lại">⚠️ từ link</span>'
+        : "";
+      return '<div class="tally-row" data-key="' + k + '"' + highlight + '>' +
+        '<span class="tally-code" data-act="edit" title="Chạm để sửa lại mã cho đúng">' + escapeHtml(item.code) + warnBadge + '</span>' +
+        '<span class="tally-qty">x' + item.qty + '</span>' +
+        '<button class="tally-del" data-act="del" title="Xoá khỏi phiên quét">✕</button>' +
+      '</div>';
     }).join("");
   }
+
+  // Sua/xoa 1 dong trong phien quet - phong khi may quet ra sai noi dung
+  // (vd QR dan link ben thu 3, khong phai ma san pham that).
+  document.getElementById("tallyList").addEventListener("click", function(e){
+    var target = e.target.closest("[data-act]");
+    if (!target) return;
+    var row = e.target.closest(".tally-row");
+    if (!row) return;
+    var key = row.getAttribute("data-key");
+    var current = sessionTally[key];
+    if (!current) return;
+
+    if (target.getAttribute("data-act") === "del"){
+      delete sessionTally[key];
+      renderTally();
+    } else if (target.getAttribute("data-act") === "edit"){
+      var newCode = prompt("Sửa lại đúng mã sản phẩm in trên tem:", current.code);
+      if (newCode === null) return; // nguoi dung bam Huy
+      newCode = newCode.trim();
+      if (!newCode) return;
+      var newKey = normalizeKey(newCode);
+      delete sessionTally[key];
+      if (sessionTally[newKey]) sessionTally[newKey].qty += current.qty;
+      else sessionTally[newKey] = { code: newCode, qty: current.qty, fromLink: false };
+      renderTally();
+    }
+  });
 
   async function startCountScan(){
     try{
@@ -1071,7 +1228,9 @@
     document.getElementById("tabSingle").style.display = tab === "single" ? "block" : "none";
     document.getElementById("tabBulk").style.display = tab === "bulk" ? "block" : "none";
     document.getElementById("tabScanCount").style.display = tab === "scan" ? "block" : "none";
+    document.getElementById("tabLinkMap").style.display = tab === "map" ? "block" : "none";
     if (tab !== "scan") stopCountScan(); // roi tab quet -> tat camera, giu lai ket qua da dem
+    document.getElementById("saveSheetBtn").textContent = tab === "map" ? "Lưu bảng đối chiếu" : "Lưu vào kho";
   }
   document.querySelectorAll(".tab-btn").forEach(function(b){
     b.addEventListener("click", function(){ switchTab(b.getAttribute("data-tab")); });
@@ -1081,6 +1240,7 @@
   document.getElementById("fabBtn").addEventListener("click", function(){ openSheet("bulk"); });
   document.getElementById("emptyImportBtn").addEventListener("click", function(){ openSheet("bulk"); });
   document.getElementById("openScanCountLink").addEventListener("click", function(){ openSheet("scan"); });
+  document.getElementById("openLinkMapLink").addEventListener("click", function(){ openSheet("map"); });
   document.getElementById("cancelSheetBtn").addEventListener("click", closeSheet);
   overlay.addEventListener("click", function(e){ if (e.target === overlay) closeSheet(); });
 
@@ -1117,6 +1277,19 @@
       stopCountScan();
       sessionTally = {};
       renderTally();
+    } else if (activeTab === "map"){
+      var mapEntries = parseLinkMapPaste(document.getElementById("linkMapText").value);
+      if (mapEntries.length === 0){
+        showToast("Không đọc được dữ liệu — kiểm tra lại đã dán đúng cột 'Mã gạch' và 'Link trong QR' chưa.");
+        return;
+      }
+      mapEntries.forEach(function(e){ linkMap[e.shortId] = e.code; });
+      saveLinkMap();
+      document.getElementById("linkMapCount").textContent = Object.keys(linkMap).length;
+      document.getElementById("linkMapText").value = "";
+      closeSheet();
+      showToast("Đã lưu bảng đối chiếu: " + mapEntries.length + " mã.");
+      return; // day khong phai thao tac them vao kho ton, dung lai o day
     }
 
     saveInventory();
@@ -1131,6 +1304,7 @@
     // camera se bi trinh duyet chan. Bao truoc de nguoi dung khong tuong lam sai.
     cameraMsg.textContent = "⚠️ Đang mở file trực tiếp nên camera sẽ bị chặn — xem hướng dẫn host lên HTTPS để quét được.";
   }
+  loadLinkMap();
   loadInventory();
 })();
 </script>
