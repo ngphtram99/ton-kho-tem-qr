@@ -611,9 +611,9 @@
     <div class="field-row">
       <label>Phạm vi</label>
       <div class="option-group">
-        <label><input type="radio" name="exportScope" value="all" checked /> Tất cả (<span id="exportCountAll">0</span> mã)</label>
-        <label><input type="radio" name="exportScope" value="available" /> Chỉ còn tem (<span id="exportCountAvail">0</span> mã)</label>
-        <label><input type="radio" name="exportScope" value="out" /> Chỉ đã hết tem (<span id="exportCountOut">0</span> mã)</label>
+        <label><input type="radio" name="exportScope" value="all" checked /> Tất cả · <span id="exportCountAll">0</span> mã</label>
+        <label><input type="radio" name="exportScope" value="available" /> Chỉ còn tem · <span id="exportCountAvail">0</span> mã</label>
+        <label><input type="radio" name="exportScope" value="out" /> Chỉ đã hết tem · <span id="exportCountOut">0</span> mã</label>
       </div>
     </div>
 
@@ -629,7 +629,7 @@
 
     <div class="sheet-actions">
       <button class="btn ghost" id="cancelExportBtn">Huỷ</button>
-      <button class="btn" id="doExportBtn">Xuất file CSV</button>
+      <button class="btn" id="doExportBtn">Xuất file Excel (.xlsx)</button>
     </div>
   </div>
 </div>
@@ -637,6 +637,7 @@
 <div id="toast"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
 (function(){
   "use strict";
@@ -1373,14 +1374,6 @@
   document.getElementById("cancelExportBtn").addEventListener("click", closeExportSheet);
   exportOverlay.addEventListener("click", function(e){ if (e.target === exportOverlay) closeExportSheet(); });
 
-  // Bao 1 gia tri cho an toan trong file CSV (bao trong dau nhay kep neu co
-  // dau phay, dau nhay kep, hoac xuong dong; nhan doi dau nhay kep ben trong).
-  function csvEscape(value){
-    var s = String(value == null ? "" : value);
-    if (/[",\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
-    return s;
-  }
-
   function formatDateVN(ts){
     try{ return new Date(ts).toLocaleString("vi-VN"); }
     catch(e){ return ""; }
@@ -1388,6 +1381,10 @@
 
   document.getElementById("doExportBtn").addEventListener("click", function(){
     if (inventory.length === 0){ showToast("Kho đang trống, chưa có gì để xuất."); return; }
+    if (typeof XLSX === "undefined"){
+      showToast("Không tải được thư viện xuất Excel — kiểm tra kết nối mạng rồi thử lại.");
+      return;
+    }
 
     var scope = document.querySelector('input[name="exportScope"]:checked').value;
     var wantQty = document.getElementById("colQty").checked;
@@ -1405,27 +1402,33 @@
     if (wantStatus) header.push("Trạng thái");
     if (wantUpdated) header.push("Cập nhật gần nhất");
 
-    var lines = [header.map(csvEscape).join(",")];
+    // Dung mang 2 chieu (array-of-arrays) de SheetJS tu chia dung tung cot -
+    // khong con phu thuoc dau phan cach "," hay ";" theo vung mien nhu CSV nua.
+    var aoa = [header];
     rows.forEach(function(item){
-      var line = [csvEscape(item.code)];
-      if (wantQty) line.push(csvEscape(item.qty));
-      if (wantStatus) line.push(csvEscape(item.qty > 0 ? "Còn tem" : "Đã hết"));
-      if (wantUpdated) line.push(csvEscape(formatDateVN(item.updatedAt)));
-      lines.push(line.join(","));
+      var row = [item.code];
+      if (wantQty) row.push(item.qty);
+      if (wantStatus) row.push(item.qty > 0 ? "Còn tem" : "Đã hết");
+      if (wantUpdated) row.push(formatDateVN(item.updatedAt));
+      aoa.push(row);
     });
 
-    // Them BOM (\uFEFF) de Excel nhan dung UTF-8, khong bi loi font tieng Viet.
-    var csvContent = "\uFEFF" + lines.join("\n");
-    var blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    var url = URL.createObjectURL(blob);
+    var worksheet = XLSX.utils.aoa_to_sheet(aoa);
+    // Tu dong dan do rong cot cho de doc (uoc luong theo do dai noi dung).
+    worksheet["!cols"] = header.map(function(_, colIdx){
+      var maxLen = header[colIdx].length;
+      aoa.forEach(function(r){
+        var cell = r[colIdx];
+        if (cell != null) maxLen = Math.max(maxLen, String(cell).length);
+      });
+      return { wch: Math.min(Math.max(maxLen + 2, 10), 40) };
+    });
+
+    var workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Tồn kho tem QR");
+
     var today = new Date().toISOString().slice(0, 10);
-    var a = document.createElement("a");
-    a.href = url;
-    a.download = "ton-kho-tem-qr_" + today + ".csv";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+    XLSX.writeFile(workbook, "ton-kho-tem-qr_" + today + ".xlsx");
 
     closeExportSheet();
     showToast("Đã xuất báo cáo: " + rows.length + " mã.");
