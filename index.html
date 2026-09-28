@@ -621,6 +621,10 @@
       </div>
       <div id="countScanMsg" style="font-size:12.5px; color:var(--ink-soft); margin-top:8px; min-height:16px;"></div>
       <button class="btn" id="toggleScanCountBtn" style="width:100%; margin-top:2px;">Bắt đầu quét</button>
+      <div class="option-group" style="margin-top:10px;">
+        <label><input type="checkbox" id="recountToggle" /> Kiểm kê lại từ đầu — kết quả quét sẽ GHI ĐÈ số lượng trong kho (không cộng dồn)</label>
+      </div>
+      <div id="recountDiff" style="display:none; margin-top:8px; padding:10px 12px; border-radius:10px; background:var(--bg); border:1px solid var(--line); font-size:12.5px; line-height:1.6;"></div>
       <div class="scan-tally-header">
         <span>Đã quét: <b id="tallyTotal">0</b> lượt · <b id="tallyUnique">0</b> mã khác nhau</span>
         <button class="btn ghost small" id="resetTallyBtn">Xoá hết</button>
@@ -1441,7 +1445,43 @@
       : baseMsg;
   }
 
+  // ---- Kiem ke lai tu dau: so sanh ket qua quet voi kho hien tai ----
+  function computeRecountDiff(){
+    var res = { match: [], diff: [], missing: [], added: [] };
+    inventory.forEach(function(item){
+      var sc = sessionTally[item.key];
+      if (!sc){ if (item.qty > 0) res.missing.push(item); return; }
+      if (sc.qty === item.qty) res.match.push(item);
+      else res.diff.push({ code: item.code, sys: item.qty, scanned: sc.qty });
+    });
+    Object.keys(sessionTally).forEach(function(k){
+      if (!findByKey(k)) res.added.push(sessionTally[k]);
+    });
+    return res;
+  }
+
+  function updateRecountDiff(){
+    var box = document.getElementById("recountDiff");
+    if (!box) return;
+    var on = document.getElementById("recountToggle").checked;
+    if (!on){ box.style.display = "none"; return; }
+    box.style.display = "block";
+    var d = computeRecountDiff();
+    function list(arr, fmt, max){
+      var shown = arr.slice(0, max).map(fmt).join(", ");
+      return shown + (arr.length > max ? " … +" + (arr.length - max) + " mã nữa" : "");
+    }
+    var html = '<b>So với kho hiện tại:</b><br/>' +
+      '✅ Khớp: <b>' + d.match.length + '</b> · 🆕 Mã mới: <b>' + d.added.length + '</b> · ' +
+      '⚠️ Lệch số lượng: <b>' + d.diff.length + '</b> · ❓ Chưa quét thấy: <b>' + d.missing.length + '</b>';
+    if (d.diff.length) html += '<br/><span style="color:var(--out);">Lệch: ' + list(d.diff, function(x){ return escapeHtml(x.code) + " (kho " + x.sys + " → quét " + x.scanned + ")"; }, 8) + '</span>';
+    if (d.missing.length) html += '<br/><span style="color:var(--ink-soft);">Chưa thấy trên bàn: ' + list(d.missing, function(x){ return escapeHtml(x.code) + " (kho " + x.qty + ")"; }, 12) + '</span>';
+    box.innerHTML = html;
+  }
+  document.getElementById("recountToggle").addEventListener("change", updateRecountDiff);
+
   function renderTally(justScannedKey){
+    updateRecountDiff();
     var keys = Object.keys(sessionTally);
     var totalScans = 0;
     keys.forEach(function(k){ totalScans += sessionTally[k].qty; });
@@ -1898,10 +1938,29 @@
     } else if (activeTab === "scan"){
       var tallyKeys = Object.keys(sessionTally);
       if (tallyKeys.length === 0){ showToast("Chưa quét được mã nào."); return; }
-      tallyKeys.forEach(function(k){
-        upsertCode(sessionTally[k].code, sessionTally[k].qty);
-        addedCount++;
-      });
+      if (document.getElementById("recountToggle").checked){
+        var d = computeRecountDiff();
+        var msg = "Kiểm kê lại từ đầu sẽ GHI ĐÈ kho theo kết quả quét:\n" +
+          "• Khớp: " + d.match.length + " mã\n• Mã mới: " + d.added.length + " mã\n" +
+          "• Đổi số lượng: " + d.diff.length + " mã\n" +
+          "• Chưa quét thấy → về 0 (Đã hết): " + d.missing.length + " mã\n\nTiếp tục?";
+        if (!confirm(msg)) return;
+        inventory.forEach(function(item){
+          var sc = sessionTally[item.key];
+          item.qty = sc ? sc.qty : 0;
+          item.updatedAt = Date.now();
+        });
+        tallyKeys.forEach(function(k){
+          if (!findByKey(k)) upsertCode(sessionTally[k].code, sessionTally[k].qty);
+          addedCount++;
+        });
+        document.getElementById("recountToggle").checked = false;
+      } else {
+        tallyKeys.forEach(function(k){
+          upsertCode(sessionTally[k].code, sessionTally[k].qty);
+          addedCount++;
+        });
+      }
       stopCountScan();
       sessionTally = {};
       renderTally();
