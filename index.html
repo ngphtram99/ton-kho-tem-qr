@@ -1307,12 +1307,37 @@
     var loopId = null;
     var busy = false;
 
-    function handleJsQrFallback(){
-      canvasEl.width = videoEl.videoWidth;
-      canvasEl.height = videoEl.videoHeight;
-      ctx2.drawImage(videoEl, 0, 0, canvasEl.width, canvasEl.height);
+    var decodeAttempt = 0;
+    var lastDecodeAt = 0;
+
+    // Ve 1 vung cua video vao canvas da thu nho (toi da maxW px ngang) roi giai ma.
+    // Thu nho giup nhanh hon rat nhieu tren dien thoai (khong co bo quet QR goc).
+    function decodeRegion(sx, sy, sw, sh, maxW){
+      var scale = Math.min(1, maxW / sw);
+      canvasEl.width = Math.max(1, Math.round(sw * scale));
+      canvasEl.height = Math.max(1, Math.round(sh * scale));
+      ctx2.drawImage(videoEl, sx, sy, sw, sh, 0, 0, canvasEl.width, canvasEl.height);
       var imgData = ctx2.getImageData(0, 0, canvasEl.width, canvasEl.height);
-      var result = window.jsQR ? jsQR(imgData.data, imgData.width, imgData.height) : null;
+      return jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: "dontInvert" });
+    }
+
+    function handleJsQrFallback(){
+      if (!window.jsQR){ onFrame(null); return; }
+      var now = Date.now();
+      if (now - lastDecodeAt < 80) return; // gioi han ~12 lan/giay, tranh nghen may
+      lastDecodeAt = now;
+
+      var vw = videoEl.videoWidth, vh = videoEl.videoHeight;
+      if (!vw || !vh){ onFrame(null); return; }
+      decodeAttempt++;
+      var result = null;
+      if (decodeAttempt % 2 === 1){
+        result = decodeRegion(0, 0, vw, vh, 720); // toan khung hinh
+      } else {
+        // Cat vung giua (55%) va giu nhieu chi tiet hon: giup doc duoc QR nho / o xa
+        var cw = Math.round(vw * 0.55), ch = Math.round(vh * 0.55);
+        result = decodeRegion(Math.round((vw - cw) / 2), Math.round((vh - ch) / 2), cw, ch, 640);
+      }
       onFrame(result && result.data ? extractCodeFromScan(result.data) : null);
     }
 
@@ -1336,9 +1361,18 @@
 
     return {
       start: async function(){
+        if (!nativeDetector && !window.jsQR){
+          await new Promise(function(resolve){
+            var sc = document.createElement("script");
+            sc.src = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js";
+            sc.onload = resolve; sc.onerror = resolve;
+            document.head.appendChild(sc);
+          });
+          if (!window.jsQR) showToast("Không tải được thư viện quét QR — kiểm tra mạng rồi tải lại trang.");
+        }
         // Xin do phan giai cao hon mac dinh de QR nho/o xa van du net de nhan dien.
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } }
+          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
         });
         videoEl.srcObject = stream;
         await videoEl.play();
