@@ -536,6 +536,7 @@
     <span>Tổng mã: <b id="statTotal">0</b></span>
     <span>Còn tem: <b id="statAvailable">0</b></span>
     <span>Đã hết: <b id="statOut">0</b></span>
+    <span id="syncStatus" style="font-weight:600; cursor:pointer;">☁️ Đang kết nối...</span>
   </div>
   <button id="openLinkMapLink" style="margin-top:8px; background:none; border:none; padding:0; font-size:12.5px; color:var(--ink-soft); text-decoration:underline; cursor:pointer; font-family:inherit;">🔗 Bảng đối chiếu mã ↔ link QR (<span id="linkMapCountHeader">0</span> mã)</button>
   <button id="openExportLink" style="margin-top:8px; margin-left:14px; background:none; border:none; padding:0; font-size:12.5px; color:var(--ink-soft); text-decoration:underline; cursor:pointer; font-family:inherit;">📄 Xuất báo cáo</button>
@@ -775,16 +776,145 @@
     });
   }
 
-  async function storageGet(key){
+  // ---------- Luu tru cuc bo (tren may) ----------
+  async function localGet(key){
     if (hasClaudeStorage){
-      var res = await window.storage.get(key, false);
-      return res ? res.value : null;
+      try{ var res = await window.storage.get(key, false); return res ? res.value : null; }
+      catch(e){ return null; }
     }
     return idbGet(key);
   }
-  async function storageSet(key, value){
+  async function localSet(key, value){
     if (hasClaudeStorage) await window.storage.set(key, value, false);
     else await idbSet(key, value);
+  }
+
+  // ---------- Dong bo len Supabase (dung chung giua MacBook / dien thoai) ----------
+  // Khoa "publishable" duoc thiet ke de nam cong khai trong trinh duyet - an toan.
+  var SUPABASE_URL = "https://iyrdloahtjupkahvqawy.supabase.co";
+  var SUPABASE_KEY = "sb_publishable_--ECRNVaigu1jynjNKj1sg_duTMvNql";
+  var pendingWrites = 0;
+  var lastWriteAt = 0;
+
+  var lastSyncError = "";
+  function setSyncStatus(state, err){
+    if (err) lastSyncError = String(err && err.message ? err.message : err);
+    if (state === "ok") lastSyncError = "";
+    setSyncStatusInner(state);
+  }
+  function setSyncStatusInner(state){
+    var el = document.getElementById("syncStatus");
+    if (!el) return;
+    if (state === "ok"){ el.textContent = "☁️ Đã đồng bộ"; el.style.color = "var(--available)"; }
+    else if (state === "syncing"){ el.textContent = "☁️ Đang đồng bộ..."; el.style.color = "var(--ink-soft)"; }
+    else { el.textContent = "⚠️ Chưa đồng bộ (đang lưu tạm trên máy)"; el.style.color = "var(--out)"; }
+  }
+
+  async function remoteGet(key){
+    var res = await fetch(SUPABASE_URL + "/rest/v1/app_data?id=eq." + encodeURIComponent(key) + "&select=payload", {
+      headers: { "apikey": SUPABASE_KEY }
+    });
+    if (!res.ok) throw new Error("remoteGet " + res.status);
+    var rows = await res.json();
+    return rows.length ? JSON.stringify(rows[0].payload) : null;
+  }
+
+  async function remoteSet(key, valueStr){
+    var res = await fetch(SUPABASE_URL + "/rest/v1/app_data", {
+      method: "POST",
+      headers: {
+        "apikey": SUPABASE_KEY,
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates,return=minimal"
+      },
+      body: JSON.stringify({ id: key, payload: JSON.parse(valueStr), updated_at: new Date().toISOString() })
+    });
+    if (!res.ok) throw new Error("remoteSet " + res.status);
+  }
+
+  // Gop du lieu lan dau khi 1 may vua duoc noi vao Supabase ma ca may va may chu deu da co du lieu.
+  function mergeData(key, localStr, remoteStr){
+    try{
+      var a = JSON.parse(localStr), b = JSON.parse(remoteStr);
+      if (key === "temInventory"){
+        var map = {};
+        (b || []).forEach(function(it){ map[it.key] = it; });
+        (a || []).forEach(function(it){
+          var cur = map[it.key];
+          if (!cur || (it.updatedAt || 0) >= (cur.updatedAt || 0)) map[it.key] = it;
+        });
+        return JSON.stringify(Object.keys(map).map(function(k){ return map[k]; }));
+      }
+      if (key === "temLinkMap"){
+        return JSON.stringify(Object.assign({}, b, a));
+      }
+      if (key === "storeAudits"){
+        var out = Object.assign({}, b);
+        Object.keys(a || {}).forEach(function(k){
+          if (!out[k] || (a[k].lastVisited || 0) >= (out[k].lastVisited || 0)) out[k] = a[k];
+        });
+        return JSON.stringify(out);
+      }
+    }catch(e){}
+    return remoteStr;
+  }
+
+  async function storageGet(key){
+    var local = await localGet(key);
+    var remote;
+    try{ remote = await remoteGet(key); }
+    catch(e){ setSyncStatus("offline", e); return local; } // mat mang -> dung ban tren may
+
+    // May nay co thay doi chua kip day len (do mat mang truoc do) -> uu tien day len, khong ghi de
+    var dirty = await localGet("__dirty:" + key);
+    if (dirty && local !== null){
+      try{ await remoteSet(key, local); await localSet("__dirty:" + key, ""); setSyncStatus("ok"); }
+      catch(e){ setSyncStatus("offline"); }
+      return local;
+    }
+
+    var synced = await localGet("__syncedOnce");
+    if (remote === null){
+      if (local !== null){
+        try{ await remoteSet(key, local); }catch(e){ setSyncStatus("offline"); return local; }
+      }
+      setSyncStatus("ok");
+      return local;
+    }
+    var result = remote;
+    if (local !== null && !synced && local !== remote){
+      result = mergeData(key, local, remote);
+      try{ await remoteSet(key, result); }catch(e){}
+    }
+    await localSet(key, result);
+    setSyncStatus("ok");
+    return result;
+  }
+
+  async function storageSet(key, value){
+    pendingWrites++;
+    lastWriteAt = Date.now();
+    setSyncStatus("syncing");
+    try{
+      await localSet(key, value);
+      try{
+        await remoteSet(key, value);
+        await localSet("__dirty:" + key, "");
+        setSyncStatus("ok");
+      }catch(e){
+        await localSet("__dirty:" + key, "1"); // danh dau de lan sau day len
+        setSyncStatus("offline", e);
+      }
+    } finally {
+      pendingWrites--;
+      lastWriteAt = Date.now();
+    }
+  }
+
+  // Tai lai du lieu tu may chu (vd luc quay lai tab / mo lai app tren may khac)
+  function pullFromCloud(){
+    if (pendingWrites > 0 || Date.now() - lastWriteAt < 3000) return Promise.resolve();
+    return Promise.all([loadLinkMap(), loadStoreAudits(), loadInventory()]);
   }
 
   function normalizeKey(raw){
@@ -813,6 +943,7 @@
   var saveTimer = null;
   function saveInventory(){
     clearTimeout(saveTimer);
+    lastWriteAt = Date.now();
     saveTimer = setTimeout(async function(){
       try{
         await storageSet(STORAGE_KEY, JSON.stringify(inventory));
@@ -838,6 +969,7 @@
   var saveLinkMapTimer = null;
   function saveLinkMap(){
     clearTimeout(saveLinkMapTimer);
+    lastWriteAt = Date.now();
     saveLinkMapTimer = setTimeout(async function(){
       try{
         await storageSet(LINK_MAP_KEY, JSON.stringify(linkMap));
@@ -867,6 +999,7 @@
   var saveStoreAuditsTimer = null;
   function saveStoreAudits(){
     clearTimeout(saveStoreAuditsTimer);
+    lastWriteAt = Date.now();
     saveStoreAuditsTimer = setTimeout(async function(){
       try{
         await storageSet(STORE_AUDITS_KEY, JSON.stringify(storeAudits));
@@ -1876,9 +2009,24 @@
     // camera se bi trinh duyet chan. Bao truoc de nguoi dung khong tuong lam sai.
     cameraMsg.textContent = "⚠️ Đang mở file trực tiếp nên camera sẽ bị chặn — xem hướng dẫn host lên HTTPS để quét được.";
   }
-  loadLinkMap();
-  loadStoreAudits();
-  loadInventory();
+  document.getElementById("syncStatus").addEventListener("click", function(){
+    if (lastSyncError) alert("Chi tiết lỗi đồng bộ:\n" + lastSyncError + "\n\nGợi ý: lỗi 404 thường do chưa chạy đoạn SQL tạo bảng app_data trong Supabase; lỗi 401/403 do sai khóa hoặc chưa tạo policy.");
+    else pullFromCloud().then(function(){ showToast("Đã cập nhật dữ liệu mới nhất."); });
+  });
+
+  // Lan dau mo: keo du lieu tu may chu (gop voi du lieu tren may neu co), sau do danh dau da dong bo.
+  Promise.all([loadLinkMap(), loadStoreAudits(), loadInventory()]).then(function(){
+    var el = document.getElementById("syncStatus");
+    if (el && el.textContent.indexOf("Đã đồng bộ") !== -1) localSet("__syncedOnce", "1");
+  });
+
+  // Quay lai tab / mo lai app -> tu lay du lieu moi nhat (vd vua quet xong tren may kia)
+  document.addEventListener("visibilitychange", function(){
+    if (document.visibilityState === "visible") pullFromCloud();
+  });
+  setInterval(function(){
+    if (document.visibilityState === "visible") pullFromCloud();
+  }, 30000);
 })();
 </script>
 </body>
