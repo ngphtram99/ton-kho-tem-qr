@@ -764,6 +764,11 @@
 
     <div id="needResultView" style="display:none;">
       <div class="need-summary" id="needSummary"></div>
+      <div class="tabs" id="needViewTabs">
+        <button class="store-tab-btn active" data-need-view="code">Theo mã</button>
+        <button class="store-tab-btn" data-need-view="store">Theo cửa hàng</button>
+      </div>
+      <input class="field" id="needStoreFilter" placeholder="Lọc theo tên cửa hàng..." style="display:none; margin-bottom:10px;" autocomplete="off" />
       <div id="needList"></div>
       <div class="sheet-actions">
         <button class="btn ghost" id="backNeedBtn">← Dán danh sách khác</button>
@@ -2276,71 +2281,146 @@
   });
 
   // ---------- Doi chieu nhu cau in tem ----------
-  var needRows = []; // { code, needed, have, shortfall }
-
-  // Phan tich danh sach ma can in. Uu tien tim dong tieu de co o "Ma" (dung
-  // het de khop voi file cua nguoi dung: STT / Khu vuc / Cua hang / Ma).
-  // Khong co tieu de -> lay cot cuoi cung tren moi dong (hoac ca dong neu chi 1 cot).
+  // Tra ve mang {code, store, zone} - store/zone la "" neu file khong co cot do.
   function parseNeededCodesPaste(text){
     var lines = String(text || "").split("\n").map(function(l){ return l.replace(/\r$/, ""); }).filter(function(l){ return l.trim().length; });
     if (!lines.length) return [];
 
-    var codeIdx = -1;
-    lines[0].split("\t").forEach(function(c, i){ if (/^m[ãa]$/i.test(c.trim())) codeIdx = i; });
+    var codeIdx = -1, storeIdx = -1, zoneIdx = -1;
+    lines[0].split("\t").forEach(function(c, i){
+      var t = c.trim();
+      if (/^m[ãa]$/i.test(t)) codeIdx = i;
+      else if (/^c[ửu]a\s*h[àa]ng$/i.test(t)) storeIdx = i;
+      else if (/^khu\s*v[ựu]c$/i.test(t)) zoneIdx = i;
+    });
     var dataLines = codeIdx !== -1 ? lines.slice(1) : lines;
 
-    var codes = [];
+    var rows = [];
     dataLines.forEach(function(line){
       var cols = line.split("\t");
       var raw = codeIdx !== -1 && cols[codeIdx] !== undefined ? cols[codeIdx] : cols[cols.length - 1];
       raw = (raw || "").trim();
       if (!raw) return;
       if (/^\d+$/.test(raw) && cols.length > 1) return; // tranh lam STT thanh ma khi lech cot
-      codes.push(raw);
+      rows.push({
+        code: raw,
+        store: storeIdx !== -1 ? (cols[storeIdx] || "").trim() : "",
+        zone: zoneIdx !== -1 ? (cols[zoneIdx] || "").trim() : ""
+      });
     });
-    return codes;
-  }
-
-  function computeProductionNeed(codesList){
-    var demand = {};
-    codesList.forEach(function(c){
-      var k = normalizeKey(c);
-      if (!k) return;
-      if (!demand[k]) demand[k] = { code: c.trim(), needed: 0 };
-      demand[k].needed += 1;
-    });
-    var rows = Object.keys(demand).map(function(k){
-      var d = demand[k];
-      var item = findByKey(k);
-      var have = item ? item.qty : 0;
-      return { code: d.code, needed: d.needed, have: have, shortfall: Math.max(0, d.needed - have) };
-    });
-    rows.sort(function(a, b){ return b.shortfall - a.shortfall || a.code.localeCompare(b.code); });
     return rows;
   }
 
+  function computeProductionNeed(rowsIn){
+    var demand = {}; // codeKey -> { code, needed, stores: [{store, zone}] }
+    rowsIn.forEach(function(r){
+      var k = normalizeKey(r.code);
+      if (!k) return;
+      if (!demand[k]) demand[k] = { code: r.code.trim(), needed: 0, stores: [] };
+      demand[k].needed += 1;
+      if (r.store) demand[k].stores.push({ store: r.store, zone: r.zone });
+    });
+    var byCode = Object.keys(demand).map(function(k){
+      var d = demand[k];
+      var item = findByKey(k);
+      var have = item ? item.qty : 0;
+      return { code: d.code, needed: d.needed, have: have, shortfall: Math.max(0, d.needed - have), stores: d.stores };
+    });
+    byCode.sort(function(a, b){ return b.shortfall - a.shortfall || a.code.localeCompare(b.code); });
+
+    var byStoreMap = {};
+    rowsIn.forEach(function(r){
+      if (!r.store) return;
+      var sk = normalizeKey(r.store);
+      if (!byStoreMap[sk]) byStoreMap[sk] = { store: r.store.trim(), zone: r.zone || "", items: [] };
+      var k = normalizeKey(r.code);
+      var item = findByKey(k);
+      var have = item ? item.qty : 0;
+      var shortfall = Math.max(0, demand[k].needed - have);
+      byStoreMap[sk].items.push({ code: r.code.trim(), have: have, shortfall: shortfall });
+    });
+    var byStore = Object.keys(byStoreMap).map(function(k){ return byStoreMap[k]; });
+    byStore.sort(function(a, b){ return a.store.localeCompare(b.store); });
+
+    return { byCode: byCode, byStore: byStore };
+  }
+
+  var needData = { byCode: [], byStore: [] };
+  var needView = "code";
+
+  function escapeAttr(s){ return String(s).replace(/"/g, "&quot;"); }
+
   function renderNeedResult(){
-    var totalCodes = needRows.length;
-    var shortCodes = needRows.filter(function(r){ return r.shortfall > 0; });
+    var totalCodes = needData.byCode.length;
+    var shortCodes = needData.byCode.filter(function(r){ return r.shortfall > 0; });
     var totalShortfall = shortCodes.reduce(function(s, r){ return s + r.shortfall; }, 0);
     document.getElementById("needSummary").innerHTML =
       "Tổng mã cần: <b>" + totalCodes + "</b> &nbsp;·&nbsp; " +
       "Đã đủ tem: <b>" + (totalCodes - shortCodes.length) + "</b> &nbsp;·&nbsp; " +
-      '<span style="color:var(--out);">Thiếu: <b>' + shortCodes.length + ' mã, cần in thêm ' + totalShortfall + ' tem</b></span>';
+      '<span style="color:var(--out);">Thiếu: <b>' + shortCodes.length + ' mã, cần in thêm ' + totalShortfall + ' tem</b></span>' +
+      (needData.byStore.length ? ' &nbsp;·&nbsp; Số cửa hàng trong danh sách: <b>' + needData.byStore.length + '</b>' : '');
 
-    document.getElementById("needList").innerHTML = needRows.map(function(r){
+    var hasStoreCol = needData.byStore.length > 0;
+    document.getElementById("needViewTabs").style.display = hasStoreCol ? "flex" : "none";
+    document.getElementById("needStoreFilter").style.display = (hasStoreCol && needView === "store") ? "block" : "none";
+
+    if (needView === "store" && hasStoreCol) renderNeedByStore();
+    else renderNeedByCode();
+  }
+
+  function renderNeedByCode(){
+    document.getElementById("needList").innerHTML = needData.byCode.map(function(r){
       var cls = r.shortfall > 0 ? " short" : "";
       var nums = r.shortfall > 0
         ? "Cần " + r.needed + " · Đang có " + r.have + " · <b>Thiếu " + r.shortfall + "</b>"
         : "Cần " + r.needed + " · Đang có " + r.have + " · Đủ";
-      return '<div class="need-row' + cls + '"><span class="need-row-code">' + escapeHtml(r.code) + '</span><span class="need-row-nums">' + nums + '</span></div>';
+      var storeLine = "";
+      if (r.stores && r.stores.length){
+        var names = r.stores.map(function(s){ return s.store; }).join(", ");
+        storeLine = '<div style="font-size:11.5px; color:var(--ink-soft); margin-top:3px;">Cho cửa hàng: ' + escapeHtml(names) + '</div>';
+      }
+      return '<div class="need-row' + cls + '" style="flex-direction:column; align-items:stretch;">' +
+        '<div style="display:flex; justify-content:space-between; gap:10px;"><span class="need-row-code">' + escapeHtml(r.code) + '</span><span class="need-row-nums">' + nums + '</span></div>' +
+        storeLine + '</div>';
     }).join("") || '<div class="tally-empty">Không có mã nào để đối chiếu.</div>';
   }
 
+  function renderNeedByStore(){
+    var filter = normalizeKey(document.getElementById("needStoreFilter").value);
+    var stores = needData.byStore.filter(function(s){ return !filter || normalizeKey(s.store).indexOf(filter) !== -1; });
+    document.getElementById("needList").innerHTML = stores.map(function(s){
+      var shortInStore = s.items.filter(function(it){ return it.shortfall > 0; }).length;
+      var itemsHtml = s.items.map(function(it){
+        return '<div style="display:flex; justify-content:space-between; padding:4px 0; font-size:12.5px;">' +
+          '<span class="mono">' + escapeHtml(it.code) + '</span>' +
+          '<span style="color:' + (it.shortfall > 0 ? 'var(--out)' : 'var(--available)') + ';">' +
+          (it.shortfall > 0 ? "Thiếu " + it.shortfall : "Đủ") + '</span></div>';
+      }).join("");
+      return '<div class="store-row">' +
+        '<div class="store-row-top"><div>' +
+          '<div class="store-row-name">' + escapeHtml(s.store) + (s.zone ? ' <span style="font-weight:400; color:var(--ink-soft);">(' + escapeHtml(s.zone) + ')</span>' : '') + '</div>' +
+          '<div class="store-row-meta">' + s.items.length + ' mã cần' + (shortInStore ? ' · <span style="color:var(--out);">' + shortInStore + ' mã đang thiếu</span>' : ' · đủ hết') + '</div>' +
+        '</div></div>' +
+        '<div style="margin-top:6px;">' + itemsHtml + '</div>' +
+      '</div>';
+    }).join("") || '<div class="tally-empty">Không tìm thấy cửa hàng khớp.</div>';
+  }
+
+  document.querySelectorAll('[data-need-view]').forEach(function(b){
+    b.addEventListener("click", function(){
+      needView = b.getAttribute("data-need-view");
+      document.querySelectorAll('[data-need-view]').forEach(function(x){ x.classList.toggle("active", x === b); });
+      renderNeedResult();
+    });
+  });
+  document.getElementById("needStoreFilter").addEventListener("input", renderNeedByStore);
+
   document.getElementById("analyzeNeedBtn").addEventListener("click", function(){
-    var codes = parseNeededCodesPaste(document.getElementById("needText").value);
-    if (!codes.length){ showToast("Không đọc được mã nào — kiểm tra lại dữ liệu đã dán."); return; }
-    needRows = computeProductionNeed(codes);
+    var rows = parseNeededCodesPaste(document.getElementById("needText").value);
+    if (!rows.length){ showToast("Không đọc được mã nào — kiểm tra lại dữ liệu đã dán."); return; }
+    needData = computeProductionNeed(rows);
+    needView = "code";
+    document.querySelectorAll('[data-need-view]').forEach(function(x){ x.classList.toggle("active", x.getAttribute("data-need-view") === "code"); });
     renderNeedResult();
     document.getElementById("needInputView").style.display = "none";
     document.getElementById("needResultView").style.display = "block";
@@ -2351,28 +2431,42 @@
   });
 
   document.getElementById("exportNeedBtn").addEventListener("click", function(){
-    if (!needRows.length){ showToast("Chưa có dữ liệu để xuất."); return; }
+    if (!needData.byCode.length){ showToast("Chưa có dữ liệu để xuất."); return; }
     if (typeof XLSX === "undefined"){ showToast("Không tải được thư viện xuất Excel."); return; }
-    var aoa = [["Mã sản phẩm", "Số lượng cần", "Đang có trong kho", "Cần in thêm"]];
-    needRows.forEach(function(r){ aoa.push([r.code, r.needed, r.have, r.shortfall]); });
-    var ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws["!cols"] = aoa[0].map(function(_, i){
-      var m = aoa[0][i].length;
-      aoa.forEach(function(row){ if (row[i] != null) m = Math.max(m, String(row[i]).length); });
-      return { wch: Math.min(Math.max(m + 2, 10), 40) };
+
+    var aoaCode = [["Mã sản phẩm", "Số lượng cần", "Đang có trong kho", "Cần in thêm", "Cho các cửa hàng"]];
+    needData.byCode.forEach(function(r){
+      aoaCode.push([r.code, r.needed, r.have, r.shortfall, (r.stores || []).map(function(s){ return s.store; }).join(", ")]);
     });
+    var wsCode = XLSX.utils.aoa_to_sheet(aoaCode);
+    wsCode["!cols"] = aoaCode[0].map(function(_, i){
+      var m = aoaCode[0][i].length;
+      aoaCode.forEach(function(row){ if (row[i] != null) m = Math.max(m, String(row[i]).length); });
+      return { wch: Math.min(Math.max(m + 2, 10), 50) };
+    });
+
     var wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Nhu cau in tem");
+    XLSX.utils.book_append_sheet(wb, wsCode, "Theo mã");
+
+    if (needData.byStore.length){
+      var aoaStore = [["Cửa hàng", "Khu vực", "Mã sản phẩm", "Trạng thái"]];
+      needData.byStore.forEach(function(s){
+        s.items.forEach(function(it){
+          aoaStore.push([s.store, s.zone, it.code, it.shortfall > 0 ? "Thiếu " + it.shortfall : "Đủ"]);
+        });
+      });
+      var wsStore = XLSX.utils.aoa_to_sheet(aoaStore);
+      wsStore["!cols"] = aoaStore[0].map(function(_, i){
+        var m = aoaStore[0][i].length;
+        aoaStore.forEach(function(row){ if (row[i] != null) m = Math.max(m, String(row[i]).length); });
+        return { wch: Math.min(Math.max(m + 2, 10), 40) };
+      });
+      XLSX.utils.book_append_sheet(wb, wsStore, "Theo cửa hàng");
+    }
+
     XLSX.writeFile(wb, "nhu-cau-in-tem_" + new Date().toISOString().slice(0, 10) + ".xlsx");
   });
 
-  var needOverlay = document.getElementById("needOverlay");
-  function openNeedSheet(){
-    needOverlay.classList.add("show");
-    document.getElementById("needInputView").style.display = "block";
-    document.getElementById("needResultView").style.display = "none";
-  }
-  function closeNeedSheet(){ needOverlay.classList.remove("show"); }
   document.getElementById("openNeedLink").addEventListener("click", openNeedSheet);
   document.getElementById("cancelNeedBtn").addEventListener("click", closeNeedSheet);
   needOverlay.addEventListener("click", function(e){ if (e.target === needOverlay) closeNeedSheet(); });
