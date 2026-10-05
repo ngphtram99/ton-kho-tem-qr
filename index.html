@@ -393,6 +393,20 @@
   }
   .store-row-name{ font-weight:600; font-size:14px; }
   .store-row-meta{ font-size:12px; color: var(--ink-soft); margin-top:2px; }
+  .need-row{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    background: var(--surface); border:1px solid var(--line); border-radius:9px;
+    padding:9px 12px; margin-bottom:6px;
+  }
+  .need-row.short{ border-color: var(--out); background: var(--out-bg); }
+  .need-row-code{ font-family:"IBM Plex Mono", monospace; font-size:13.5px; font-weight:600; word-break:break-all; }
+  .need-row-nums{ font-size:12px; color: var(--ink-soft); white-space:nowrap; flex-shrink:0; }
+  .need-row.short .need-row-nums b{ color: var(--out); }
+  .need-summary{
+    display:flex; flex-wrap:wrap; gap:12px; font-size:12.5px; color: var(--ink-soft);
+    background: var(--bg); border:1px solid var(--line); border-radius:9px; padding:10px 12px; margin-bottom:12px;
+  }
+  .need-summary b{ color: var(--ink); }
   .store-row-codes{
     margin-top:8px;
     font-family:"IBM Plex Mono", monospace;
@@ -541,6 +555,7 @@
   <button id="openLinkMapLink" style="margin-top:8px; background:none; border:none; padding:0; font-size:12.5px; color:var(--ink-soft); text-decoration:underline; cursor:pointer; font-family:inherit;">🔗 Bảng đối chiếu mã ↔ link QR (<span id="linkMapCountHeader">0</span> mã)</button>
   <button id="openExportLink" style="margin-top:8px; margin-left:14px; background:none; border:none; padding:0; font-size:12.5px; color:var(--ink-soft); text-decoration:underline; cursor:pointer; font-family:inherit;">📄 Xuất báo cáo</button>
   <br/>
+  <button id="openNeedLink" style="margin-top:8px; margin-left:14px; background:none; border:none; padding:0; font-size:12.5px; color:var(--ink-soft); text-decoration:underline; cursor:pointer; font-family:inherit;">🖨️ Đối chiếu nhu cầu in tem</button>
   <button id="openStoreLink" style="margin-top:8px; background:none; border:none; padding:0; font-size:12.5px; color:var(--ink-soft); text-decoration:underline; cursor:pointer; font-family:inherit;">🏬 Kiểm kê theo cửa hàng</button>
 </header>
 
@@ -615,6 +630,11 @@
 
     <div id="tabScanCount" style="display:none;">
       <p class="hint" style="margin-top:0;">Đưa lần lượt từng tem trên bàn vào khung hình. Quét trúng mã nào, mã đó tự cộng thêm 1 — quét lại đúng mã cũ (tem trùng) sẽ cộng tiếp, không tính là lỗi.</p>
+      <div style="margin-top:4px; margin-bottom:10px;">
+        <button class="btn ghost" id="importFileBtn" style="width:100%;">📄 Nhập từ file PDF / ảnh (nhiều tem cùng lúc)</button>
+        <input type="file" id="importFileInput" accept="application/pdf,image/*" multiple style="display:none;" />
+        <div id="importFileMsg" style="font-size:12.5px; color:var(--ink-soft); margin-top:6px; min-height:16px; line-height:1.5;"></div>
+      </div>
       <div id="scanCountCameraWrap" class="camera-box">
         <video id="videoCount" playsinline muted></video>
         <div class="scan-frame"></div>
@@ -722,6 +742,33 @@
     <div class="sheet-actions">
       <button class="btn ghost" id="cancelStoreBtn">Đóng</button>
       <button class="btn" id="saveStoreBtn">Lưu kiểm kê cửa hàng này</button>
+    </div>
+  </div>
+</div>
+
+<div id="needOverlay" class="modal-overlay">
+  <div id="needSheet" class="modal-sheet">
+    <div class="sheet-handle"></div>
+    <h3>Đối chiếu nhu cầu in tem</h3>
+    <p class="hint">Dán danh sách các mã cần có tem (dán cả bảng từ Google Sheet cũng được, app tự tìm đúng cột "Mã"). App đếm mỗi mã cần bao nhiêu tem và so với kho hiện tại, để bạn biết mã nào cần in thêm — tránh in dư.</p>
+
+    <div id="needInputView">
+      <div class="field-row">
+        <textarea id="needText" rows="9" placeholder="STT	Khu vực	Cửa hàng	Mã&#10;1	Bình Tân	Anh Tuấn	N68073R&#10;2	Bình Tân	Anh Tuấn	P65117R&#10;..."></textarea>
+      </div>
+      <div class="sheet-actions">
+        <button class="btn ghost" id="cancelNeedBtn">Đóng</button>
+        <button class="btn" id="analyzeNeedBtn">Phân tích nhu cầu</button>
+      </div>
+    </div>
+
+    <div id="needResultView" style="display:none;">
+      <div class="need-summary" id="needSummary"></div>
+      <div id="needList"></div>
+      <div class="sheet-actions">
+        <button class="btn ghost" id="backNeedBtn">← Dán danh sách khác</button>
+        <button class="btn" id="exportNeedBtn">Xuất file Excel</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1254,36 +1301,63 @@
   // gach (chu/so thuong, khong phai link, khong phai so thuan tuy nhu STT).
   // Ho tro dan ca bang day du (STT, Ma gach, Link trong QR, Link san pham...)
   // lan chi dan rieng 2 cot Ma gach + Link trong QR.
+  // Nguoi dung sua ma cho 1 QR dang link chua co trong bang doi chieu -> ghi nho de lan sau tu nhan dung.
+  function learnLinkMapping(shortKey, code){
+    if (!shortKey || !code) return;
+    linkMap[shortKey] = code;
+    saveLinkMap();
+    var el = document.getElementById("linkMapCount");
+    if (el) el.textContent = Object.keys(linkMap).length;
+    showToast("Đã ghi nhớ: " + shortKey + " = " + code + " — lần sau quét tự nhận đúng.");
+  }
+
   function parseLinkMapPaste(text){
     var entries = [];
+    var skipped = []; // ma gach co trong bang nhung KHONG co link QR (vd lenh tao QR chua chay/loi)
+    var linkIdx = -1, codeIdx = -1;
     var lines = String(text || "").split("\n");
     lines.forEach(function(line){
       line = line.replace(/\r$/, "");
       if (!line.trim()) return;
       var cols = line.split("\t");
+
+      // Dong tieu de -> hoc vi tri cot "Link trong QR" va "Ma gach"
+      var hi = -1;
+      cols.forEach(function(c, i){ if (/^link trong qr$/i.test(c.trim())) hi = i; });
+      if (hi !== -1){
+        linkIdx = hi;
+        codeIdx = -1;
+        cols.forEach(function(c, i){ if (/^m.\s*g.ch$/i.test(c.trim())) codeIdx = i; });
+        return;
+      }
       if (cols.length < 2) return;
 
-      var linkCol = null;
-      for (var i = 0; i < cols.length; i++){
-        if (/^https?:\/\//i.test(cols[i].trim())) { linkCol = cols[i].trim(); break; }
+      var link = null, code = null;
+      if (linkIdx !== -1 && codeIdx !== -1){
+        link = (cols[linkIdx] || "").trim();
+        code = (cols[codeIdx] || "").trim();
+        if (!/^https?:\/\//i.test(link)) link = null;
+      } else {
+        // Khong co dong tieu de: doan cot. Link QR phai la link dang .../scanner/... hoac qrcode-solution
+        // (khong nham voi "Link san pham"). Ma gach = cot dau tien khong phai link, khong phai so STT.
+        for (var i = 0; i < cols.length; i++){
+          var c = cols[i].trim();
+          if (/^https?:\/\//i.test(c) && /scanner\/|qrcode-solution/i.test(c)){ link = c; break; }
+        }
+        for (var j = 0; j < cols.length; j++){
+          var v = cols[j].trim();
+          if (!v || /^https?:\/\//i.test(v) || /^\d+$/.test(v)) continue;
+          code = v; break;
+        }
       }
-      if (!linkCol) return; // dong nay khong co link nao - co the la dong tieu de, bo qua
+      if (!code) return;
+      if (!link){ skipped.push(code); return; }
 
-      var codeCol = null;
-      for (var j = 0; j < cols.length; j++){
-        var v = cols[j].trim();
-        if (!v || v === linkCol) continue;
-        if (/^https?:\/\//i.test(v)) continue; // bo qua cac cot link khac (vd "Link san pham")
-        if (/^\d+$/.test(v)) continue; // bo qua cot STT (chi toan chu so)
-        codeCol = v;
-        break;
-      }
-      if (!codeCol) return;
-
-      var extracted = extractCodeFromScan(linkCol);
-      if (!extracted.fromLink) return; // khong parse duoc thanh link hop le
-      entries.push({ shortId: normalizeKey(extracted.code), code: codeCol });
+      var extracted = extractCodeFromScan(link);
+      if (!extracted.fromLink) return;
+      entries.push({ shortId: normalizeKey(extracted.code), code: code });
     });
+    parseLinkMapPaste.skipped = skipped;
     return entries;
   }
 
@@ -1561,6 +1635,7 @@
       newCode = newCode.trim();
       if (!newCode) return;
       var newKey = normalizeKey(newCode);
+      if (current.fromLink && newKey !== key) learnLinkMapping(key, newCode);
       delete sessionTally[key];
       if (sessionTally[newKey]) sessionTally[newKey].qty += current.qty;
       else sessionTally[newKey] = { code: newCode, qty: current.qty, fromLink: false };
@@ -1592,6 +1667,178 @@
     if (Object.keys(sessionTally).length && !confirm("Xoá toàn bộ kết quả đã quét trong phiên này?")) return;
     sessionTally = {};
     renderTally();
+  });
+
+  // ---- Nhap hang loat tu file PDF / anh (cac to A4 chua nhieu tem) ----
+  var PDFJS_SRC = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+  var PDFJS_WORKER = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+  function loadScriptOnce(src){
+    return new Promise(function(resolve, reject){
+      var sc = document.createElement("script");
+      sc.src = src; sc.onload = resolve; sc.onerror = function(){ reject(new Error("Không tải được " + src)); };
+      document.head.appendChild(sc);
+    });
+  }
+  async function ensurePdfJs(){
+    if (window.pdfjsLib) return;
+    await loadScriptOnce(PDFJS_SRC);
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
+  }
+
+  // Lay danh sach ma san pham tu cac doan chu cua 1 trang PDF: tim chu "MA SAN PHAM"
+  // roi lay ma nam ngay sau (cung doan hoac doan ke tiep).
+  function extractCodesFromTextItems(items){
+    var LABEL = /m[ãa]\s*s[ảa]n\s*ph[ẩa]m/i;
+    var CODE = /^[A-Za-z0-9][A-Za-z0-9\-_.]{2,29}$/;
+    function isCode(t){ return CODE.test(t) && /\d/.test(t); }
+    var strs = items.map(function(it){ return String(it.str || "").normalize("NFC").trim(); }).filter(function(t){ return t.length; });
+    var codes = [];
+    for (var i = 0; i < strs.length; i++){
+      if (!LABEL.test(strs[i])) continue;
+      var rest = strs[i].replace(LABEL, "").replace(/^[\s:]+/, "").trim();
+      if (isCode(rest)){ codes.push(rest); continue; }
+      for (var k = i + 1; k < Math.min(strs.length, i + 4); k++){
+        if (LABEL.test(strs[k])) break;
+        if (isCode(strs[k])){ codes.push(strs[k]); break; }
+      }
+    }
+    return codes;
+  }
+
+  // Giai ma NHIEU QR tren cung 1 anh: giai ma 1 QR, to trang vung do, lap lai den khi het.
+  function multiDecodeQr(rgba, w, h, maxIter){
+    var found = [];
+    for (var iter = 0; iter < (maxIter || 80); iter++){
+      var r = window.jsQR(rgba, w, h, { inversionAttempts: "dontInvert" });
+      if (!r || !r.data) break;
+      found.push(r.data);
+      var L = r.location, xs = [L.topLeftCorner.x, L.topRightCorner.x, L.bottomLeftCorner.x, L.bottomRightCorner.x],
+          ys = [L.topLeftCorner.y, L.topRightCorner.y, L.bottomLeftCorner.y, L.bottomRightCorner.y];
+      var minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs), minY = Math.min.apply(null, ys), maxY = Math.max.apply(null, ys);
+      var pad = Math.max(maxX - minX, maxY - minY) * 0.15;
+      var x0 = Math.max(0, Math.floor(minX - pad)), x1 = Math.min(w - 1, Math.ceil(maxX + pad));
+      var y0 = Math.max(0, Math.floor(minY - pad)), y1 = Math.min(h - 1, Math.ceil(maxY + pad));
+      for (var y = y0; y <= y1; y++){
+        for (var x = x0; x <= x1; x++){
+          var idx = (y * w + x) * 4;
+          rgba[idx] = 255; rgba[idx + 1] = 255; rgba[idx + 2] = 255; rgba[idx + 3] = 255;
+        }
+      }
+    }
+    return found;
+  }
+
+  function tallyAdd(map, rawCode, fromLink, n){
+    var key = normalizeKey(rawCode);
+    if (!key) return;
+    if (!map[key]) map[key] = { code: String(rawCode).trim(), qty: 0, fromLink: !!fromLink };
+    else if (fromLink) map[key].fromLink = true;
+    map[key].qty += n || 1;
+  }
+
+  async function decodeCanvasToTally(canvas, map){
+    var ctx = canvas.getContext("2d");
+    var img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    var raws = multiDecodeQr(img.data, canvas.width, canvas.height, 80);
+    raws.forEach(function(raw){
+      var res = resolveScannedCode(extractCodeFromScan(raw));
+      tallyAdd(map, res.code, res.fromLink, 1);
+    });
+    return raws.length;
+  }
+
+  async function importFiles(files, msgEl, targetTally){
+    var result = {}; var stat = { text: 0, qr: 0, files: files.length };
+    var canvas = document.createElement("canvas");
+    for (var fi = 0; fi < files.length; fi++){
+      var file = files[fi];
+      msgEl.textContent = "Đang đọc file " + (fi + 1) + "/" + files.length + ": " + file.name + " ...";
+      if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)){
+        await ensurePdfJs();
+        var data = await file.arrayBuffer();
+        var task = window.pdfjsLib.getDocument({ data: data });
+        task.onPassword = function(update, reason){
+          var pw = prompt(reason === 2 ? "Mật khẩu sai, nhập lại mật khẩu PDF:" : "File PDF yêu cầu mật khẩu:");
+          if (pw === null) task.destroy(); else update(pw);
+        };
+        var pdf = await task.promise;
+        for (var pn = 1; pn <= pdf.numPages; pn++){
+          msgEl.textContent = file.name + " — trang " + pn + "/" + pdf.numPages + " ...";
+          var page = await pdf.getPage(pn);
+          var tc = await page.getTextContent();
+          var codes = extractCodesFromTextItems(tc.items);
+          if (codes.length){
+            codes.forEach(function(c){ tallyAdd(result, c, false, 1); });
+            stat.text += codes.length;
+          } else {
+            // Trang khong co lop chu -> ve trang ra anh roi giai ma cac QR
+            await ensureJsQr();
+            var vp1 = page.getViewport({ scale: 1 });
+            var scale = Math.min(3, 2000 / vp1.width);
+            var vp = page.getViewport({ scale: scale });
+            canvas.width = Math.round(vp.width); canvas.height = Math.round(vp.height);
+            var cx = canvas.getContext("2d");
+            cx.fillStyle = "#fff"; cx.fillRect(0, 0, canvas.width, canvas.height);
+            await page.render({ canvasContext: cx, viewport: vp }).promise;
+            stat.qr += await decodeCanvasToTally(canvas, result);
+          }
+          await new Promise(function(r){ setTimeout(r, 0); }); // nhuong cho giao dien cap nhat
+        }
+      } else if (/^image\//.test(file.type)){
+        await ensureJsQr();
+        var bmp = await new Promise(function(resolve, reject){
+          var im = new Image(); var url = URL.createObjectURL(file);
+          im.onload = function(){ URL.revokeObjectURL(url); resolve(im); };
+          im.onerror = function(){ reject(new Error("Không đọc được ảnh " + file.name)); };
+          im.src = url;
+        });
+        var sc = Math.min(1, 2400 / Math.max(bmp.naturalWidth, bmp.naturalHeight));
+        canvas.width = Math.round(bmp.naturalWidth * sc); canvas.height = Math.round(bmp.naturalHeight * sc);
+        canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
+        stat.qr += await decodeCanvasToTally(canvas, result);
+      }
+    }
+    Object.keys(result).forEach(function(k){
+      var it = result[k];
+      tallyAdd(targetTally, it.code, it.fromLink, it.qty);
+    });
+    return { stat: stat, uniqueCodes: Object.keys(result).length, total: stat.text + stat.qr, result: result };
+  }
+
+  async function ensureJsQr(){
+    if (window.jsQR) return;
+    await loadScriptOnce("https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js");
+  }
+
+  document.getElementById("importFileBtn").addEventListener("click", function(){
+    document.getElementById("importFileInput").click();
+  });
+  document.getElementById("importFileInput").addEventListener("change", async function(e){
+    var files = Array.prototype.slice.call(e.target.files || []);
+    e.target.value = "";
+    if (!files.length) return;
+    var msgEl = document.getElementById("importFileMsg");
+    var btn = document.getElementById("importFileBtn");
+    btn.disabled = true;
+    try{
+      var out = await importFiles(files, msgEl, sessionTally);
+      renderTally();
+      if (out.total === 0){
+        msgEl.innerHTML = "⚠️ Không đọc được mã nào trong file. Nếu là ảnh chụp, hãy chụp rõ nét hơn hoặc dùng file PDF gốc.";
+      } else {
+        var warn = Object.keys(out.result).filter(function(k){ return out.result[k].fromLink; }).length;
+        msgEl.innerHTML = "✅ Đã đọc <b>" + out.total + "</b> tem, <b>" + out.uniqueCodes + "</b> mã khác nhau" +
+          (out.stat.text ? " (đọc từ chữ: " + out.stat.text + ")" : "") + (out.stat.qr ? " (giải mã QR: " + out.stat.qr + ")" : "") +
+          ". Xem lại danh sách bên dưới rồi bấm <b>Lưu vào kho</b>." +
+          (warn ? '<br/><span style="color:var(--out);">⚠️ ' + warn + " mã tách từ link chưa có trong bảng đối chiếu — kiểm tra lại các dòng có nhãn ⚠️.</span>" : "");
+        showToast("Đã nhập " + out.total + " tem từ file.");
+      }
+    }catch(err){
+      msgEl.textContent = "Lỗi khi đọc file: " + (err && err.message ? err.message : err);
+    }finally{
+      btn.disabled = false;
+    }
   });
 
   // ---- Che do 3: Kiem ke tai 1 cua hang cu the ----
@@ -1729,6 +1976,7 @@
       newCode = newCode.trim();
       if (!newCode) return;
       var newKey = normalizeKey(newCode);
+      if (current.fromLink && newKey !== key) learnLinkMapping(key, newCode);
       if (current.consumedCount){
         refundToPersonalStock(current.code, current.consumedCount);
         showToast("Đã hoàn lại " + current.consumedCount + " tem vào kho do đổi mã — bật lại công tắc và quét lại nếu cần trừ tiếp cho mã đúng.");
@@ -2000,6 +2248,11 @@
       renderTally();
     } else if (activeTab === "map"){
       var mapEntries = parseLinkMapPaste(document.getElementById("linkMapText").value);
+      var skippedCodes = parseLinkMapPaste.skipped || [];
+      if (mapEntries.length === 0 && skippedCodes.length){
+        alert("Không có dòng nào có link QR để lưu.\n\nCác mã sau chưa có 'Link trong QR' (" + skippedCodes.length + " mã):\n" + skippedCodes.slice(0, 30).join(", ") + (skippedCodes.length > 30 ? " …" : "") + "\n\nHãy chạy lại lệnh tạo QR cho các mã này trong hệ thống của bạn rồi dán lại.");
+        return;
+      }
       if (mapEntries.length === 0){
         showToast("Không đọc được dữ liệu — kiểm tra lại đã dán đúng cột 'Mã gạch' và 'Link trong QR' chưa.");
         return;
@@ -2010,6 +2263,9 @@
       document.getElementById("linkMapText").value = "";
       closeSheet();
       showToast("Đã lưu bảng đối chiếu: " + mapEntries.length + " mã.");
+      if (skippedCodes.length){
+        alert("Đã lưu " + mapEntries.length + " mã.\n\n⚠️ Có " + skippedCodes.length + " mã CHƯA có 'Link trong QR' nên không đối chiếu được:\n" + skippedCodes.slice(0, 30).join(", ") + (skippedCodes.length > 30 ? " …" : "") + "\n\nNếu tem của các mã này đã in sẵn: quét thử rồi chạm vào mã để sửa lại cho đúng, app sẽ ghi nhớ cho các lần sau. Nếu chưa có QR: chạy lại lệnh tạo QR cho các mã này trong hệ thống.");
+      }
       return; // day khong phai thao tac them vao kho ton, dung lai o day
     }
 
@@ -2018,6 +2274,108 @@
     closeSheet();
     showToast("Đã lưu " + addedCount + " mã vào kho.");
   });
+
+  // ---------- Doi chieu nhu cau in tem ----------
+  var needRows = []; // { code, needed, have, shortfall }
+
+  // Phan tich danh sach ma can in. Uu tien tim dong tieu de co o "Ma" (dung
+  // het de khop voi file cua nguoi dung: STT / Khu vuc / Cua hang / Ma).
+  // Khong co tieu de -> lay cot cuoi cung tren moi dong (hoac ca dong neu chi 1 cot).
+  function parseNeededCodesPaste(text){
+    var lines = String(text || "").split("\n").map(function(l){ return l.replace(/\r$/, ""); }).filter(function(l){ return l.trim().length; });
+    if (!lines.length) return [];
+
+    var codeIdx = -1;
+    lines[0].split("\t").forEach(function(c, i){ if (/^m[ãa]$/i.test(c.trim())) codeIdx = i; });
+    var dataLines = codeIdx !== -1 ? lines.slice(1) : lines;
+
+    var codes = [];
+    dataLines.forEach(function(line){
+      var cols = line.split("\t");
+      var raw = codeIdx !== -1 && cols[codeIdx] !== undefined ? cols[codeIdx] : cols[cols.length - 1];
+      raw = (raw || "").trim();
+      if (!raw) return;
+      if (/^\d+$/.test(raw) && cols.length > 1) return; // tranh lam STT thanh ma khi lech cot
+      codes.push(raw);
+    });
+    return codes;
+  }
+
+  function computeProductionNeed(codesList){
+    var demand = {};
+    codesList.forEach(function(c){
+      var k = normalizeKey(c);
+      if (!k) return;
+      if (!demand[k]) demand[k] = { code: c.trim(), needed: 0 };
+      demand[k].needed += 1;
+    });
+    var rows = Object.keys(demand).map(function(k){
+      var d = demand[k];
+      var item = findByKey(k);
+      var have = item ? item.qty : 0;
+      return { code: d.code, needed: d.needed, have: have, shortfall: Math.max(0, d.needed - have) };
+    });
+    rows.sort(function(a, b){ return b.shortfall - a.shortfall || a.code.localeCompare(b.code); });
+    return rows;
+  }
+
+  function renderNeedResult(){
+    var totalCodes = needRows.length;
+    var shortCodes = needRows.filter(function(r){ return r.shortfall > 0; });
+    var totalShortfall = shortCodes.reduce(function(s, r){ return s + r.shortfall; }, 0);
+    document.getElementById("needSummary").innerHTML =
+      "Tổng mã cần: <b>" + totalCodes + "</b> &nbsp;·&nbsp; " +
+      "Đã đủ tem: <b>" + (totalCodes - shortCodes.length) + "</b> &nbsp;·&nbsp; " +
+      '<span style="color:var(--out);">Thiếu: <b>' + shortCodes.length + ' mã, cần in thêm ' + totalShortfall + ' tem</b></span>';
+
+    document.getElementById("needList").innerHTML = needRows.map(function(r){
+      var cls = r.shortfall > 0 ? " short" : "";
+      var nums = r.shortfall > 0
+        ? "Cần " + r.needed + " · Đang có " + r.have + " · <b>Thiếu " + r.shortfall + "</b>"
+        : "Cần " + r.needed + " · Đang có " + r.have + " · Đủ";
+      return '<div class="need-row' + cls + '"><span class="need-row-code">' + escapeHtml(r.code) + '</span><span class="need-row-nums">' + nums + '</span></div>';
+    }).join("") || '<div class="tally-empty">Không có mã nào để đối chiếu.</div>';
+  }
+
+  document.getElementById("analyzeNeedBtn").addEventListener("click", function(){
+    var codes = parseNeededCodesPaste(document.getElementById("needText").value);
+    if (!codes.length){ showToast("Không đọc được mã nào — kiểm tra lại dữ liệu đã dán."); return; }
+    needRows = computeProductionNeed(codes);
+    renderNeedResult();
+    document.getElementById("needInputView").style.display = "none";
+    document.getElementById("needResultView").style.display = "block";
+  });
+  document.getElementById("backNeedBtn").addEventListener("click", function(){
+    document.getElementById("needInputView").style.display = "block";
+    document.getElementById("needResultView").style.display = "none";
+  });
+
+  document.getElementById("exportNeedBtn").addEventListener("click", function(){
+    if (!needRows.length){ showToast("Chưa có dữ liệu để xuất."); return; }
+    if (typeof XLSX === "undefined"){ showToast("Không tải được thư viện xuất Excel."); return; }
+    var aoa = [["Mã sản phẩm", "Số lượng cần", "Đang có trong kho", "Cần in thêm"]];
+    needRows.forEach(function(r){ aoa.push([r.code, r.needed, r.have, r.shortfall]); });
+    var ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws["!cols"] = aoa[0].map(function(_, i){
+      var m = aoa[0][i].length;
+      aoa.forEach(function(row){ if (row[i] != null) m = Math.max(m, String(row[i]).length); });
+      return { wch: Math.min(Math.max(m + 2, 10), 40) };
+    });
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Nhu cau in tem");
+    XLSX.writeFile(wb, "nhu-cau-in-tem_" + new Date().toISOString().slice(0, 10) + ".xlsx");
+  });
+
+  var needOverlay = document.getElementById("needOverlay");
+  function openNeedSheet(){
+    needOverlay.classList.add("show");
+    document.getElementById("needInputView").style.display = "block";
+    document.getElementById("needResultView").style.display = "none";
+  }
+  function closeNeedSheet(){ needOverlay.classList.remove("show"); }
+  document.getElementById("openNeedLink").addEventListener("click", openNeedSheet);
+  document.getElementById("cancelNeedBtn").addEventListener("click", closeNeedSheet);
+  needOverlay.addEventListener("click", function(e){ if (e.target === needOverlay) closeNeedSheet(); });
 
   // ---------- Xuat bao cao (CSV) ----------
   var exportOverlay = document.getElementById("exportOverlay");
